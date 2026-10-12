@@ -89,11 +89,21 @@
 
   // モデルを読み込んでパイプラインを作る（意味検索と回答で共通）。
   // すでに端末にあるファイルは取り直さない（Transformers.js が保存先を先に見る）。featureName はエラー文用
+  let defaultFetch = null;
   async function createPipeline(task, pack, onProgress, featureName) {
     const lib = await loadLibrary();
     // オフラインモード中は、外には取りに行かない（端末に保存済みのモデルだけを使う）
+    // 注意：allowRemoteModels を false にすると、Transformers.js は端末の保存分すら見ずにエラーにする
+    // （「local も remote も無効」と判定される）。なので常に true にし、オフラインモード中は
+    // 通信そのもの（env.fetch）を止める。保存分は通信より先に見られるので、端末にあれば読める。
     lib.env.allowLocalModels = false;
-    lib.env.allowRemoteModels = !AI.net.isOffline();
+    lib.env.allowRemoteModels = true;
+    if (!defaultFetch) defaultFetch = lib.env.fetch;
+    lib.env.fetch = AI.net.isOffline()
+      ? async (url) => {
+          throw new Error(`オフラインモードなので取得しません（${String(url).split('/').pop()}）`);
+        }
+      : defaultFetch;
     const progress = (info) => {
       if (!onProgress || !info) return;
       if (info.status === 'progress' && info.total) {
@@ -106,7 +116,7 @@
       return await lib.pipeline(task, pack.model, { dtype: pack.dtype, device: pack.device || 'wasm', progress_callback: progress });
     } catch (error) {
       if (AI.net.isOffline()) {
-        throw new Error(`モデルがこの端末にありません。オンラインモードで「${featureName}を有効にする」を行ってください。`);
+        throw new Error(`モデルの一部がこの端末にありません。オンラインモードで「${featureName}を有効にする」を行ってください。\n（${error && error.message ? error.message : error}）`);
       }
       throw new Error(`モデルを読み込めませんでした。${error && error.message ? error.message : error}`);
     }

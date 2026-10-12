@@ -272,6 +272,7 @@
       renderWeights();
       await render();
       await renderFoot(true);
+      warmUp(); // 意味検索と回答モデルを、起動時に自動で読み込む（待たない）
     })
     .catch((error) => {
       addMessage('ai', `記憶を開けませんでした。\n${error.message}\nプライベートブラウズでは使えないことがあります。`);
@@ -725,6 +726,38 @@
     await renderSemantic();
   }
 
+  // ---- 起動時の自動準備 ----
+  // 有効にしてあるものを、起動したら自動で読み込む（オフラインでも、端末にあるものだけで）。
+  // メモリの山を作らないよう、1つずつ：意味検索 → 足りないベクトルを作る → 意味検索を外す → 回答モデル。
+  async function warmUp() {
+    const wantSemantic = semantic.enabled && provider;
+    const wantAnswer = answerCfg.enabled && generator;
+    if (!wantSemantic && !wantAnswer) return;
+    const pm = progressMessage('起動の準備をしています…');
+    const problems = [];
+    if (wantSemantic) {
+      try {
+        pm.set('意味検索を読み込んでいます…');
+        await ensureReady(downloadProgress(pm));
+        await AI.vectors.reindex(db, provider, { onProgress: ({ done, total }) => pm.set(`意味づけ（ベクトル）を更新しています… ${done}/${total}`) });
+        await renderSemantic();
+        if (wantAnswer && provider.unload && !embedding) await provider.unload(); // 回答モデルを読む前に外す（次の検索で読み直す）
+      } catch (error) {
+        problems.push(`意味検索：${error.message}`);
+      }
+    }
+    if (wantAnswer) {
+      try {
+        pm.set('回答モデルを読み込んでいます…');
+        await ensureGenerator(downloadProgress(pm));
+      } catch (error) {
+        problems.push(`回答モデル：${error.message}`);
+      }
+    }
+    pm.remove();
+    if (problems.length) addMessage('ai', `起動時の準備で、使えないものがありました。\n${problems.join('\n')}`, { sub: '保存した文章の検索と、文章の抜き出しは使えます。' });
+  }
+
   el.semBtn.addEventListener('click', () => (semantic.enabled ? disableSemantic() : enableSemantic()));
   el.semSync.addEventListener('click', runSync);
 
@@ -746,7 +779,9 @@
     }
     // 前回、読み込みの途中でアプリが落ちていたら（目印が残っている）、回答モデルを自動でオフにする
     const tried = await getSetting(TRY_KEY);
-    if (tried && tried.value) {
+    if (tried && tried.value && closedNormallyAfter(tried.value.at)) {
+      await putSetting(TRY_KEY, null); // 答えを作っている途中で、ふつうに閉じただけ
+    } else if (tried && tried.value) {
       const wasPack = llmPackOf(tried.value.pack);
       await putSetting(TRY_KEY, null);
       const raise = String(tried.value.stage || '').startsWith('回答の作成') && (answerCfg.load || 0) < AI.rag.LOAD_LEVELS.length - 1;
@@ -771,6 +806,25 @@
 
   // 読み込み中の目印。最後まで終われば消す。落ちたら残るので、次の起動で気づける
   const TRY_KEY = 'answer-try';
+  // ふつうに閉じた・再読み込みしたときは、目印を消す（落ちたときは、この処理は走らない）
+  // 記憶（IndexedDB）への書き込みは閉じる瞬間には間に合わないので、すぐ書ける localStorage に時刻を残す
+  const CLEAN_KEY = 'ai-closed-normally';
+  window.addEventListener('pagehide', () => {
+    try {
+      localStorage.setItem(CLEAN_KEY, String(Date.now()));
+    } catch (_) {
+      /* 使えない環境では、落ちた扱いになるだけ */
+    }
+  });
+  function closedNormallyAfter(at) {
+    try {
+      const v = Number(localStorage.getItem(CLEAN_KEY) || 0);
+      localStorage.removeItem(CLEAN_KEY);
+      return v > at;
+    } catch (_) {
+      return false;
+    }
+  }
   async function guarded(pack, work) {
     const mark = (stage) => putSetting(TRY_KEY, { pack: pack.id, at: Date.now(), stage });
     await mark('読み込み');
