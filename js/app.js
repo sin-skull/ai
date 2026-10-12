@@ -1,11 +1,20 @@
-// 画面の動き。会話（覚える・聞く）と、左の記憶パネル。
+// 画面の動き。会話（覚える・聞く・調べる）と、左の記憶パネル。
 // 文字は必ず textContent で入れる（保存した内容をHTMLとして解釈しない）。
-(async function () {
+(function () {
   'use strict';
   const $ = (selector) => document.querySelector(selector);
 
+  // 古いファイルが混ざっていないか（キャッシュのずれ）。足りない部品があれば理由を出して止める
+  const REQUIRED = ['#app', '#thread', '#messages', '#composer', '#input', '#send', '#drawer',
+    '#scrim', '#menu', '#close', '#reset', '#search', '#count', '#terms', '#empty'];
+  const missing = REQUIRED.filter((s) => !$(s));
+  if (missing.length) {
+    window.__showFatal &&
+      window.__showFatal('ページの一部が古いままのようです。再読み込みしてください。', `見つからない部品: ${missing.join(' ')}`);
+    return;
+  }
+
   const el = {
-    app: $('#app'),
     thread: $('#thread'),
     messages: $('#messages'),
     hello: $('#hello'),
@@ -23,6 +32,16 @@
     empty: $('#empty'),
   };
 
+  // 古いブラウザ（matchMedia の addEventListener が無い）でも落ちないようにする
+  function onChange(query, handler) {
+    if (query.addEventListener) query.addEventListener('change', handler);
+    else if (query.addListener) query.addListener(handler);
+  }
+
+  function scrollDown() {
+    el.thread.scrollTop = el.thread.scrollHeight;
+  }
+
   // ---- 画面の高さ（iPhoneのキーボードで入力欄が隠れないように）----
   const vv = window.visualViewport;
   function fitHeight() {
@@ -31,27 +50,21 @@
     if (vv) window.scrollTo(0, 0);
     scrollDown();
   }
-  if (vv) {
-    vv.addEventListener('resize', fitHeight);
-  }
+  if (vv) vv.addEventListener('resize', fitHeight);
   window.addEventListener('resize', fitHeight);
   fitHeight();
-
-  function scrollDown() {
-    el.thread.scrollTop = el.thread.scrollHeight;
-  }
 
   // ---- 記憶パネル ----
   const wide = window.matchMedia('(min-width: 900px)');
   function setDrawer(open) {
-    const show = wide.matches || open;
-    el.drawer.classList.toggle('open', open && !wide.matches);
-    el.scrim.classList.toggle('show', open && !wide.matches);
-    el.menu.setAttribute('aria-expanded', String(open && !wide.matches));
-    el.drawer.inert = !show;
-    if (open && !wide.matches) el.close.focus();
+    const overlay = open && !wide.matches;
+    el.drawer.classList.toggle('open', overlay);
+    el.scrim.classList.toggle('show', overlay);
+    el.menu.setAttribute('aria-expanded', String(overlay));
+    el.drawer.inert = !(wide.matches || open);
+    if (overlay) el.close.focus();
   }
-  wide.addEventListener('change', () => setDrawer(false));
+  onChange(wide, () => setDrawer(false));
   el.menu.addEventListener('click', () => setDrawer(true));
   el.close.addEventListener('click', () => {
     setDrawer(false);
@@ -105,7 +118,11 @@
         b.addEventListener('click', async () => {
           // 1回選んだら、この問いのボタンは全部使えなくする
           buttons.forEach((x) => (x.disabled = true));
-          await action.run();
+          try {
+            await action.run();
+          } catch (error) {
+            addMessage('ai', `うまくいきませんでした。\n${error.message}`);
+          }
         });
         buttons.push(b);
         row.appendChild(b);
@@ -118,14 +135,17 @@
     return msg;
   }
 
-  let db;
-  try {
-    db = await AI.db.open();
-  } catch (error) {
-    addMessage('ai', `記憶を開けませんでした。\n${error.message}`);
-    el.input.disabled = true;
-    return;
-  }
+  // ---- 記憶（DB）。開けなくても、入力欄とボタンは反応するようにしておく ----
+  let db = null;
+  const dbReady = AI.db
+    .open()
+    .then((opened) => {
+      db = opened;
+      return renderTerms();
+    })
+    .catch((error) => {
+      addMessage('ai', `記憶を開けませんでした。\n${error.message}\nプライベートブラウズでは使えないことがあります。`);
+    });
 
   function formatDate(ms) {
     const d = new Date(ms);
@@ -133,10 +153,14 @@
     return `${d.getFullYear()}/${p(d.getMonth() + 1)}/${p(d.getDate())}`;
   }
 
+  // learn: { term, definition, source? }
   async function save(learn, policy) {
     let result;
     try {
-      result = await AI.terms.add(db, learn.term, learn.definition, { onConflict: policy });
+      result = await AI.terms.add(db, learn.term, learn.definition, {
+        onConflict: policy,
+        source: learn.source,
+      });
     } catch (error) {
       addMessage('ai', error.message);
       return;
@@ -163,6 +187,52 @@
     await renderTerms();
   }
 
+  // ---- Wikipedia（ここだけが外部に通信する。ボタンを押したときだけ）----
+  function showCandidate(query, list, index) {
+    const c = list[index];
+    const actions = [
+      {
+        label: 'この内容で覚える',
+        main: true,
+        run: () =>
+          save(
+            { term: query, definition: c.extract, source: { url: c.url, title: `Wikipedia「${c.title}」` } },
+            'ask'
+          ),
+      },
+    ];
+    if (index + 1 < list.length) {
+      actions.push({ label: '次の候補', run: async () => showCandidate(query, list, index + 1) });
+    }
+    actions.push({ label: 'やめる', run: async () => addMessage('ai', '覚えませんでした。') });
+    addMessage('ai', c.extract, {
+      title: c.title,
+      sub: `Wikipedia（候補 ${index + 1}/${list.length}）\n${c.url}`,
+      actions,
+    });
+  }
+
+  async function searchWikipedia(query) {
+    if (navigator.onLine === false) {
+      addMessage('ai', 'いまオフラインなので、調べられません。');
+      return;
+    }
+    addMessage('ai', `Wikipediaで「${query}」を調べています…`);
+    let list;
+    try {
+      list = await AI.wiki.search(query);
+    } catch (error) {
+      addMessage('ai', `Wikipediaに繋がりませんでした。\n${error.message}`);
+      return;
+    }
+    if (!list.length) {
+      addMessage('ai', `Wikipediaにも「${query}」は見つかりませんでした。\n「${query} = 意味」の形で教えてください。`);
+      return;
+    }
+    showCandidate(query, list, 0);
+  }
+
+  // ---- 聞く ----
   async function ask(query) {
     const record = await AI.terms.get(db, query);
     if (record) {
@@ -175,27 +245,27 @@
 
     const key = AI.normalizeTerm(query);
     const near = key
-      ? (await AI.terms.list(db))
-          .filter((r) => r.key.includes(key) || key.includes(r.key))
-          .slice(0, 5)
+      ? (await AI.terms.list(db)).filter((r) => r.key.includes(key) || key.includes(r.key)).slice(0, 5)
       : [];
-    if (near.length) {
-      addMessage('ai', `「${query}」はまだ知りません。近いものがあります。`, {
-        actions: near.map((r) => ({
-          label: r.term,
-          run: async () => {
-            addMessage('user', r.term);
-            await ask(r.term);
-          },
-        })),
-      });
-      return;
-    }
-    addMessage('ai', `「${query}」はまだ知りません。\n「${query} = 意味」の形で教えてください。`);
+    const actions = near.map((r) => ({
+      label: r.term,
+      run: async () => {
+        addMessage('user', r.term);
+        await ask(r.term);
+      },
+    }));
+    actions.push({ label: 'Wikipediaで調べる', main: true, run: () => searchWikipedia(query) });
+
+    addMessage('ai', `「${query}」はまだ知りません。${near.length ? '近い言葉があります。' : ''}\n「${query} = 意味」と教えるか、Wikipediaで調べられます。`, {
+      sub: `Wikipediaで調べると、「${query}」がWikipediaに送られます。`,
+      actions,
+    });
   }
 
   async function handle(text) {
     addMessage('user', text);
+    await dbReady;
+    if (!db) return; // 開けなかった理由は、すでに画面に出している
     const parsed = AI.chat.parse(text);
     if (parsed.type === 'teach') {
       if (!parsed.confirm) return save(parsed, 'ask');
@@ -224,17 +294,26 @@
     // 日本語の変換確定のEnterでは送らない。スマホのEnterは改行にする（送るのは右のボタン）
     if (event.isComposing || event.keyCode === 229 || touch.matches) return;
     event.preventDefault();
-    el.form.requestSubmit();
+    submit();
   });
 
-  el.form.addEventListener('submit', async (event) => {
-    event.preventDefault();
+  async function submit() {
     const text = el.input.value.trim();
     if (!text) return;
     el.input.value = '';
     fitInput();
-    await handle(text);
+    try {
+      await handle(text);
+    } catch (error) {
+      addMessage('ai', `うまくいきませんでした。\n${error.message}`);
+    }
     if (!touch.matches) el.input.focus();
+  }
+
+  // requestSubmit が無い古いブラウザでも動くように、submit イベントから直接呼ぶ
+  el.form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    submit();
   });
 
   document.querySelectorAll('.chip').forEach((chip) =>
@@ -254,6 +333,7 @@
 
   // ---- 記憶の一覧 ----
   async function renderTerms() {
+    if (!db) return;
     const all = await AI.terms.list(db);
     const q = AI.normalizeTerm(el.search.value);
     const shown = q
@@ -275,7 +355,8 @@
       const meta = document.createElement('span');
       meta.className = 'meta';
       const others = r.variants.filter((v) => v !== r.term);
-      meta.textContent = `更新 ${formatDate(r.updatedAt)}` + (others.length ? ` ・ ${others.join('、')}` : '');
+      const from = r.sources.length ? ` ・ 出典 ${r.sources[0].title || r.sources[0].url}` : '';
+      meta.textContent = `更新 ${formatDate(r.updatedAt)}${others.length ? ` ・ ${others.join('、')}` : ''}${from}`;
 
       // 消すときは2回押す（スマホの押し間違い対策）
       const del = document.createElement('button');
@@ -309,6 +390,5 @@
   }
   el.search.addEventListener('input', renderTerms);
 
-  await renderTerms();
   fitInput();
 })();
