@@ -17,13 +17,13 @@
   const PACKS = [
     {
       id: 'lfm2-350m',
-      label: '軽量（LFM2 350M）',
+      label: '日本語対応（LFM2 350M）',
       model: 'onnx-community/LFM2-350M-ONNX',
-      dtype: 'q4',
-      approxMB: 300,
+      dtype: 'q8',
+      approxMB: 510,
       version: 1,
       license: 'LFM Open License v1.0（年間売上が一定額未満なら商用も可。配布前に条件を確認する）',
-      note: '日本語に対応した小型モデル。容量が小さく、iPhoneでも落ちにくい見込み（実機は未確認）',
+      note: '日本語に対応した小型モデル。4bit版はこのアプリの実行環境で動かない（GatherBlockQuantized 未対応）ことが実機で分かったので、8bit版を使う（実機は未確認）',
       hosts: HOSTS,
     },
     {
