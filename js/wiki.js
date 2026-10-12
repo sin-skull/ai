@@ -25,7 +25,7 @@
   async function search(query, options = {}) {
     const q = String(query ?? '').trim();
     if (!q) return [];
-    const { limit = 3, signal, fetchImpl = (...args) => root.fetch(...args) } = options;
+    const { limit = 3, signal, fetchImpl } = options;
 
     const params = new URLSearchParams({
       action: 'query',
@@ -42,7 +42,8 @@
       redirects: '1',
     });
 
-    const response = await fetchImpl(`${ENDPOINT}?${params}`, { signal });
+    // 通信は AI.net 経由（オフラインモード中はここで止まる）
+    const response = await AI.net.fetch(`${ENDPOINT}?${params}`, { signal }, fetchImpl);
     if (!response.ok) throw new Error(`Wikipediaに繋がりませんでした（${response.status}）`);
     const data = await response.json();
     const pages = data && data.query && data.query.pages ? Object.values(data.query.pages) : [];

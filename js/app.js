@@ -6,7 +6,8 @@
 
   // 古いファイルが混ざっていないか（キャッシュのずれ）。足りない部品があれば理由を出して止める
   const REQUIRED = ['#app', '#thread', '#messages', '#composer', '#input', '#send', '#drawer',
-    '#scrim', '#menu', '#close', '#reset', '#search', '#count', '#terms', '#empty', '#tab-terms', '#tab-passages'];
+    '#scrim', '#menu', '#close', '#reset', '#search', '#count', '#terms', '#empty', '#tab-terms', '#tab-passages',
+    '#mode', '#storage', '#backup-info', '#export', '#import', '#import-file'];
   const missing = REQUIRED.filter((s) => !$(s));
   if (missing.length) {
     window.__showFatal &&
@@ -32,6 +33,12 @@
     empty: $('#empty'),
     tabTerms: $('#tab-terms'),
     tabPassages: $('#tab-passages'),
+    mode: $('#mode'),
+    storage: $('#storage'),
+    backupInfo: $('#backup-info'),
+    exportBtn: $('#export'),
+    importBtn: $('#import'),
+    importFile: $('#import-file'),
   };
 
   // 古いブラウザ（matchMedia の addEventListener が無い）でも落ちないようにする
@@ -171,9 +178,11 @@
   let db = null;
   const dbReady = AI.db
     .open()
-    .then((opened) => {
+    .then(async (opened) => {
       db = opened;
-      return render();
+      await AI.net.load(db); // 前回のモードを引き継ぐ
+      await render();
+      await renderFoot(true);
     })
     .catch((error) => {
       addMessage('ai', `記憶を開けませんでした。\n${error.message}\nプライベートブラウズでは使えないことがあります。`);
@@ -255,6 +264,10 @@
   }
 
   async function searchWikipedia(query) {
+    if (AI.net.isOffline()) {
+      addMessage('ai', 'いまはオフラインモードです。右上の「オフライン」を押してオンラインに戻すと、Wikipediaで調べられます。');
+      return;
+    }
     if (navigator.onLine === false) {
       addMessage('ai', 'いまオフラインなので、調べられません。');
       return;
@@ -311,6 +324,13 @@
         await ask(r.term);
       },
     }));
+    if (AI.net.isOffline()) {
+      addMessage('ai', `「${query}」はまだ知りません。${near.length ? '近い言葉があります。' : ''}\n「${query} = 意味」と教えてください。`, {
+        sub: 'オフラインモード中なので、外部には調べに行きません。',
+        actions,
+      });
+      return;
+    }
     actions.push({ label: 'Wikipediaで調べる', main: true, run: () => searchWikipedia(query) });
 
     addMessage('ai', `「${query}」はまだ知りません。${near.length ? '近い言葉があります。' : ''}\n「${query} = 意味」と教えるか、Wikipediaで調べられます。`, {
@@ -510,6 +530,154 @@
     el.empty.hidden = shown.length > 0;
     el.empty.textContent = total === 0 ? 'まだ文章は保存していません。長い文章を貼って送ると、保存できます。' : '見つかりませんでした。';
     el.count.textContent = q ? `${shown.length} / ${total} 件` : `${total} 件`;
+  }
+
+  // ---- モード（オンライン／オフライン）----
+  function showMode(off) {
+    el.mode.dataset.mode = off ? 'offline' : 'online';
+    el.mode.textContent = off ? 'オフライン' : 'オンライン';
+    el.mode.setAttribute('aria-pressed', String(off));
+    el.input.placeholder = off ? '覚えさせる・聞く' : '覚えさせる・聞く・文章を貼る';
+  }
+  AI.net.onChange(showMode);
+  el.mode.addEventListener('click', async () => {
+    const next = !AI.net.isOffline();
+    try {
+      await AI.net.setOffline(db, next);
+    } catch (error) {
+      addMessage('ai', `モードを切り替えられませんでした。\n${error.message}`);
+      return;
+    }
+    addMessage(
+      'ai',
+      next
+        ? 'オフラインモードにしました。これからは外部に通信せず、覚えた内容だけで答えます。'
+        : 'オンラインに戻しました。知らない語はWikipediaで調べられます。'
+    );
+  });
+
+  // ---- 保存領域と書き出し ----
+  const DAY = 24 * 60 * 60 * 1000;
+  function bytes(n) {
+    if (n < 1024 * 1024) return `${Math.max(1, Math.round(n / 1024))} KB`;
+    return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  }
+  const installed = () =>
+    (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+
+  async function renderFoot(askPersist) {
+    // 保存領域：使用量と、消されにくくする要求の結果
+    const parts = [];
+    try {
+      if (navigator.storage && navigator.storage.persist && askPersist) await navigator.storage.persist();
+      const persisted = navigator.storage && navigator.storage.persisted ? await navigator.storage.persisted() : false;
+      if (navigator.storage && navigator.storage.estimate) {
+        const e = await navigator.storage.estimate();
+        parts.push(`使用量 ${bytes(e.usage || 0)}`);
+      }
+      parts.push(persisted ? '消えにくい保存：有効' : '消えにくい保存：未確認');
+    } catch (_) {
+      parts.push('保存領域の状態は取得できませんでした');
+    }
+    const note = installed() ? '' : '\nホーム画面に追加すると、消えにくくなります。';
+    el.storage.textContent = parts.join(' ／ ') + note;
+
+    // 最後に書き出してからの日数
+    const last = await AI.backup.lastExportAt(db);
+    const total = (await AI.terms.count(db)) + (await AI.passages.count(db));
+    el.backupInfo.className = '';
+    if (last == null) {
+      el.backupInfo.textContent = total ? '⚠ まだ書き出していません。端末の都合で記憶が消えることがあるので、バックアップを取ってください。' : 'まだ書き出していません。';
+      if (total) el.backupInfo.className = 'warn';
+    } else {
+      const days = Math.floor((Date.now() - last) / DAY);
+      el.backupInfo.textContent = days === 0 ? '最後の書き出し：今日' : `最後の書き出し：${days}日前`;
+      if (days >= 7 && total) {
+        el.backupInfo.textContent += '。そろそろバックアップを取りませんか。';
+        el.backupInfo.className = 'warn';
+      }
+    }
+  }
+
+  function stamp() {
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
+  }
+
+  el.exportBtn.addEventListener('click', async () => {
+    if (!db) return;
+    try {
+      const data = await AI.backup.exportAll(db);
+      const name = `ai-backup-${stamp()}.json`;
+      const file = new File([JSON.stringify(data)], name, { type: 'application/json' });
+      const touchDevice = window.matchMedia('(pointer: coarse)').matches;
+      if (touchDevice && navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({ files: [file], title: name });
+        } catch (error) {
+          if (error && error.name === 'AbortError') return; // 共有をやめた
+          throw error;
+        }
+      } else {
+        const url = URL.createObjectURL(file);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+      }
+      await AI.backup.markExported(db);
+      setDrawer(false);
+      addMessage('ai', `書き出しました（${name}）。\n単語 ${data.terms.length} 件、文章 ${data.passages.length} 件。`, {
+        sub: '「ファイル」アプリなど、端末の外にも置いておくと安心です。',
+      });
+      await renderFoot(false);
+    } catch (error) {
+      addMessage('ai', `書き出せませんでした。\n${error.message}`);
+    }
+  });
+
+  el.importBtn.addEventListener('click', () => el.importFile.click());
+  el.importFile.addEventListener('change', async () => {
+    const file = el.importFile.files && el.importFile.files[0];
+    el.importFile.value = ''; // 同じファイルをもう一度選べるように
+    if (!file || !db) return;
+    setDrawer(false);
+    let data;
+    let counts;
+    try {
+      data = JSON.parse(await file.text());
+      counts = AI.backup.validate(data);
+    } catch (error) {
+      addMessage('ai', `読み込めませんでした。\n${error instanceof SyntaxError ? 'JSONとして読めないファイルです。' : error.message}`);
+      return;
+    }
+    const run = (mode) => async () => {
+      const r = await AI.backup.importAll(db, data, { mode });
+      addMessage('ai', mode === 'overwrite'
+        ? `置き換えました。単語 ${r.terms.added} 件、文章 ${r.passages.added} 件。`
+        : `統合しました。単語は新規 ${r.terms.added} 件・既存と統合 ${r.terms.merged} 件、文章は新規 ${r.passages.added} 件（同じ内容 ${r.passages.skipped} 件は重ねていません）。`);
+      await render();
+      await renderFoot(false);
+    };
+    addMessage('ai', `「${file.name}」を読み込みます。\n単語 ${counts.terms} 件、文章 ${counts.passages} 件。`, {
+      sub: '統合：今の記憶を残して足します。置き換え：今の記憶は全て消えます。',
+      actions: [
+        { label: '統合して読み込む', main: true, run: run('merge') },
+        { label: '置き換える', run: run('overwrite') },
+        { label: 'やめる', run: async () => addMessage('ai', '読み込みませんでした。') },
+      ],
+    });
+  });
+
+  // ---- オフラインで開けるように（Service Worker）----
+  if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    });
   }
 
   // ---- タブ ----

@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="color-scheme" content="light dark">
 <title>ai</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="theme-color" content="#262624">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ai">
 <style>
   :root {
     --bg: #faf9f5;
@@ -51,6 +57,21 @@
     padding: calc(6px + env(safe-area-inset-top)) 8px 6px;
   }
   header.bar h1 { flex: 1; margin: 0; font: 500 1.25rem var(--serif); letter-spacing: .06em; }
+  #mode {
+    display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 4px 12px; margin-right: 4px;
+    background: none; border: 1px solid var(--line); border-radius: 999px; color: var(--sub); font-size: .8rem;
+  }
+  #mode::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #5a9a5f; }
+  #mode[data-mode="offline"] { color: var(--ink); border-color: var(--ink); }
+  #mode[data-mode="offline"]::before { background: var(--accent); }
+  #dfoot { border-top: 1px solid var(--line); padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); font-size: .8rem; color: var(--sub); }
+  #dfoot p { margin: 0 0 6px; overflow-wrap: anywhere; white-space: pre-line; }
+  #dfoot .warn { color: var(--danger); }
+  #dfoot .row { display: flex; gap: 8px; margin-top: 8px; }
+  #dfoot button {
+    flex: 1; min-height: 44px; background: none; border: 1px solid var(--line); border-radius: 12px; font-size: .9rem;
+  }
+  #dfoot button:hover { background: var(--hover); }
   .icon {
     width: 44px; height: 44px; display: grid; place-items: center;
     background: none; border: 0; border-radius: 12px; color: var(--sub);
@@ -221,6 +242,15 @@
     <div id="count"></div>
     <ul id="terms"></ul>
     <p id="empty" hidden></p>
+    <div id="dfoot">
+      <p id="storage"></p>
+      <p id="backup-info"></p>
+      <div class="row">
+        <button id="export" type="button">書き出す</button>
+        <button id="import" type="button">読み込む</button>
+      </div>
+      <input id="import-file" type="file" accept=".json,application/json" hidden>
+    </div>
   </aside>
   <div id="scrim"></div>
 
@@ -230,6 +260,7 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
       </button>
       <h1>ai</h1>
+      <button id="mode" type="button" data-mode="online" aria-pressed="false" aria-label="オフラインモードの切り替え">オンライン</button>
       <button class="icon" id="reset" type="button" aria-label="新しい会話">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
       </button>
@@ -260,13 +291,15 @@
   </div>
 </div>
 
-<script src="js/normalize.js?v=0.5.0"></script>
-<script src="js/db.js?v=0.5.0"></script>
-<script src="js/terms.js?v=0.5.0"></script>
-<script src="js/chat.js?v=0.5.0"></script>
-<script src="js/wiki.js?v=0.5.0"></script>
-<script src="js/passages.js?v=0.5.0"></script>
-<script src="js/feedback.js?v=0.5.0"></script>
-<script src="js/app.js?v=0.5.0"></script>
+<script src="js/normalize.js?v=0.6.0"></script>
+<script src="js/db.js?v=0.6.0"></script>
+<script src="js/terms.js?v=0.6.0"></script>
+<script src="js/chat.js?v=0.6.0"></script>
+<script src="js/wiki.js?v=0.6.0"></script>
+<script src="js/passages.js?v=0.6.0"></script>
+<script src="js/feedback.js?v=0.6.0"></script>
+<script src="js/net.js?v=0.6.0"></script>
+<script src="js/backup.js?v=0.6.0"></script>
+<script src="js/app.js?v=0.6.0"></script>
 </body>
 </html>

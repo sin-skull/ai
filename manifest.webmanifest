@@ -1,0 +1,16 @@
+{
+  "name": "ai",
+  "short_name": "ai",
+  "description": "端末の中に記憶をためる、オフラインでも使えるAIアシスタント",
+  "lang": "ja",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#262624",
+  "theme_color": "#262624",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
