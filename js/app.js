@@ -963,7 +963,7 @@
       }
       msg.remove();
 
-      const evidenceActions = result.evidence.map((e) => ({ label: `[${e.n}] ${e.passage.title}`, run: async () => showPassage(e.passage, false) }));
+      const evidenceActions = result.evidence.map((e) => ({ label: `全文を見る [${e.n}] ${e.passage.title}`, run: async () => showPassage(e.passage, false) }));
       if (result.unknown) {
         await notKnown(query, {
           lead: result.missing ? `保存した文章には、「${result.missing.join('」「')}」が出てきません。` : `保存した文章には、「${query}」の答えが見つかりませんでした。`,
@@ -982,6 +982,9 @@
           actions: evidenceActions.concat([{ label: 'Wikipediaで調べる', run: async () => searchWikipedia(topicQ) }]),
         });
         return true;
+      }
+      if (result.raw && result.raw.length > result.text.length + 8) {
+        evidenceActions.push({ label: '答えの続きも見る', run: async () => addMessage('ai', result.raw, { sub: 'モデルが作った答えの全文です（長い部分は、表示を省いていました）。' }) });
       }
       lastChat = { query, text: result.text, hits };
       const weak = result.grounding < 0.5;
@@ -1161,7 +1164,7 @@
     addMessage('ai', lead + hits.map((h, i) => `${i + 1}. ${h.passage.title}${h.via && !h.via.includes('keyword') ? '〔意味が近い〕' : ''}\n   ${h.snippet}`).join('\n'), {
       title: `保存した文章に ${hits.length} 件あります`,
       sub: '押すと全文を表示します。',
-      actions: hits.map((h) => ({ label: h.passage.title, run: async () => showPassage(h.passage) })),
+      actions: hits.map((h) => ({ label: `全文を見る ${h.passage.title}`, run: async () => showPassage(h.passage) })),
     });
     return;
   }

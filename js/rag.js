@@ -156,10 +156,11 @@
       return { text: '', unknown: true, missing, evidence: context.map((c) => ({ passage: c.passage, n: c.n })), grounding: 0 };
     }
     const messages = buildMessages(query, context, persona, history);
-    const text = tidy(await generator.generate(messages, { maxTokens: maxTokens || lim.tokens, onToken }));
+    const raw = (await generator.generate(messages, { maxTokens: maxTokens || lim.tokens, onToken })).trim();
+    const text = tidy(raw);
     const unknown = isUnknown(text);
     const ground = unknown ? 0 : grounding(text, context.map((c) => c.text).join('\n'));
-    return { text, unknown, evidence: context.map((c) => ({ passage: c.passage, n: c.n })), grounding: ground };
+    return { text, raw, unknown, evidence: context.map((c) => ({ passage: c.passage, n: c.n })), grounding: ground };
   }
 
   // モデルを使わずに答える：一番近い文章の中から、質問に一番近い文を抜き出す。
