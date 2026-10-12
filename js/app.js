@@ -130,6 +130,9 @@
     if (overlay) el.close.focus();
   }
 
+  // iOSはピンチ拡大を viewport で止められないので、ジェスチャーそのものを止める
+  for (const type of ['gesturestart', 'gesturechange', 'gestureend']) document.addEventListener(type, (e) => e.preventDefault());
+
   // 横にスワイプして、記憶パネルを開け閉めする（右へ：開く／左へ：閉じる）。縦スクロールや入力中は反応しない
   {
     let start = null;
@@ -726,6 +729,7 @@
   let generator = null;
   let generatorPreparing = null;
   let answerWarned = false;
+  let lastChat = null; // 直前の質問と答え。「それってなんで？」のような続きの質問に使う
   let busy = false; // 回答の生成中は次の生成を始めない（端末が重くなる）
 
   const llmPackOf = (id) => AI.llm.PACKS.find((p) => p.id === id) || AI.llm.available()[0];
@@ -742,9 +746,18 @@
       await putSetting(TRY_KEY, null);
       answerCfg = { ...answerCfg, enabled: false };
       await saveAnswerCfg();
-      const next = AI.llm.PACKS.find((p) => p.id !== wasPack.id);
-      addMessage('ai', `前回、回答モデル（${wasPack.label}）の${tried.value.stage || '読み込み'}中にアプリが落ちたようです。回答モデルはオフにしました。`, {
-        sub: `原因はまだ分かっていません（メモリ不足とは限りません）。保存した文章の検索と、文章の抜き出しはそのまま使えます。${next ? `\n別のモデル（${next.label}）を試すには、メニューの「設定と保存」で選んでから有効にしてください。` : ''}`,
+            addMessage('ai', `前回、回答モデル（${wasPack.label}）の${tried.value.stage || '読み込み'}中にアプリが落ちたようです。回答モデルはオフにしました。`, {
+        sub: '原因はまだ分かっていません（メモリ不足とは限りません）。保存した文章の検索と、文章の抜き出しはそのまま使えます。下のボタンから、すぐ選び直せます。',
+        actions: AI.llm.available().map((p) => ({
+          label: `${p.label}で有効にする`,
+          main: p.id !== wasPack.id,
+          run: async () => {
+            answerCfg = { ...answerCfg, pack: p.id };
+            await saveAnswerCfg();
+            renderAnswer();
+            enableAnswer();
+          },
+        })),
       });
     }
     if (answerCfg.enabled) generator = AI.llm.transformersGenerator(llmPackOf(answerCfg.pack));
@@ -904,7 +917,7 @@
   });
 
   // 保存した文章を根拠に答える。表示まで終えたら true。使えなかったら false（呼び出し側が抜粋の一覧に切り替える）
-  async function answerWithModel(query, hits) {
+  async function answerWithModel(query, hits, history) {
     if (busy) return false;
     busy = true;
     try {
@@ -933,6 +946,7 @@
             query,
             hits,
             generator,
+            history,
             persona: answerCfg.persona,
             onToken: (t) => {
               text.nodeValue = t;
@@ -957,7 +971,11 @@
       }
       AI.growth.markUsed(db, 'passage', result.evidence.map((e) => e.passage.id)).catch(() => {}); // 根拠に使われた
       lastAnswer = { targets: [{ type: 'passage', id: result.evidence[0].passage.id, label: result.evidence[0].passage.title }] };
-      const warn = result.grounding < 0.5 ? '⚠ 保存した文章に無い言葉が多く含まれています。根拠を確かめてください。\n' : '';
+      lastChat = { query, text: result.text, hits };
+      const weak = result.grounding < 0.5;
+      const warn = weak ? '⚠ 保存した文章に無い言葉が多く含まれています。根拠を確かめてください。\nもし良ければ、Wikipediaで調べましょうか？\n' : '';
+      const topic = history && history[0] ? history[0].q : query;
+      if (weak) evidenceActions.push({ label: 'Wikipediaで調べる', run: async () => searchWikipedia(topic) });
       addMessage('ai', result.text, {
         sub: `${warn}根拠：${result.evidence.map((e) => `[${e.n}] ${e.passage.title}`).join('、')}\n小さなモデルが保存した文章から作った答えです。間違うことがあるので、根拠を押して確かめ、👍/👎を付けてください。`,
         actions: evidenceActions,
@@ -1124,8 +1142,8 @@
   }
 
   // 保存した文章が見つかったとき：回答モデルがあれば文章で、なければ抜き出しと一覧で答える
-  async function answerFromHits(query, hits) {
-    if (answerCfg.enabled && generator && (await answerWithModel(query, hits))) return;
+  async function answerFromHits(query, hits, history) {
+    if (answerCfg.enabled && generator && (await answerWithModel(query, hits, history))) return;
     const picked = await AI.rag.extractAnswer({ query, hits }).catch(() => null);
     const lead = picked ? `〔抜き出し〕${picked.text}\n（「${hits[0].passage.title}」より。文章から文を抜き出しただけで、答えとは限りません）\n\n` : '';
     addMessage('ai', lead + hits.map((h, i) => `${i + 1}. ${h.passage.title}${h.via && !h.via.includes('keyword') ? '〔意味が近い〕' : ''}\n   ${h.snippet}`).join('\n'), {
@@ -1201,6 +1219,13 @@
   }
 
   async function ask(query) {
+    // 続きの質問（「それってなんで？」など）は、直前の資料と会話を引き継いで答える
+    if (lastChat && answerCfg.enabled && generator && AI.rag.isFollowUp(query)) {
+      const prev = lastChat;
+      await answerFromHits(query, prev.hits, [{ q: prev.query, a: prev.text }]);
+      return;
+    }
+    lastChat = null;
     const record = await AI.terms.get(db, query);
     const hits = await searchPassages(query);
     if (record) {

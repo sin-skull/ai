@@ -119,4 +119,16 @@
     equal(await AI.rag.extractAnswer({ query: 'zzzz', hits: [{ passage }] }), null);
     equal(await AI.rag.extractAnswer({ query: 'q', hits: [] }), null);
   });
+
+  test('rag.isFollowUp: 続きの質問を見分ける', () => {
+    for (const q of ['それってなんで', 'なんで', 'もっと詳しく', 'これはどういうこと']) ok(AI.rag.isFollowUp(q), q);
+    for (const q of ['睡眠時間って平均何時間', '光合成とは', '好きな映画は']) ok(!AI.rag.isFollowUp(q), q);
+  });
+
+  test('rag.buildMessages: 前の会話が入る', () => {
+    const ctx = [{ n: 1, passage: { title: 't' }, text: '本文' }];
+    const m = AI.rag.buildMessages('なんで', ctx, {}, [{ q: '睡眠時間は', a: '7時間' }]);
+    equal(m.map((x) => x.role).join(','), 'system,user,assistant,user');
+    ok(m[1].content.includes('睡眠時間は') && m[2].content === '7時間');
+  });
 })();

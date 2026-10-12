@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="color-scheme" content="light dark">
 <title>ai</title>
 <link rel="manifest" href="manifest.webmanifest">
@@ -162,6 +162,7 @@
   }
   #send:disabled { opacity: .35; cursor: default; }
   #send svg { width: 20px; height: 20px; }
+  html, body { touch-action: pan-x pan-y; } /* ピンチ拡大と、ダブルタップ拡大をしない */
   #auto { font: inherit; font-size: .78rem; color: var(--sub); background: none; border: 1px solid currentColor; border-radius: 999px; padding: 0 14px; min-height: 44px; margin-right: 8px; cursor: pointer; }
   #auto[aria-pressed="true"] { color: var(--accent, #c15f3c); font-weight: 600; }
   #hint { max-width: 46rem; margin: 6px auto 0; text-align: center; font-size: .78rem; color: var(--sub); }
@@ -361,24 +362,24 @@
   </div>
 </div>
 
-<script src="js/normalize.js?v=0.10.7"></script>
-<script src="js/db.js?v=0.10.7"></script>
-<script src="js/terms.js?v=0.10.7"></script>
-<script src="js/chat.js?v=0.10.7"></script>
-<script src="js/wiki.js?v=0.10.7"></script>
-<script src="js/passages.js?v=0.10.7"></script>
-<script src="js/feedback.js?v=0.10.7"></script>
-<script src="js/net.js?v=0.10.7"></script>
-<script src="js/queue.js?v=0.10.7"></script>
-<script src="js/backup.js?v=0.10.7"></script>
-<script src="js/store.js?v=0.10.7"></script>
-<script src="js/embed.js?v=0.10.7"></script>
-<script src="js/llm.js?v=0.10.7"></script>
-<script src="js/rag.js?v=0.10.7"></script>
-<script src="js/growth.js?v=0.10.7"></script>
-<script src="js/sentiment.js?v=0.10.7"></script>
-<script src="js/vectors.js?v=0.10.7"></script>
-<script src="js/hybrid.js?v=0.10.7"></script>
-<script src="js/app.js?v=0.10.7"></script>
+<script src="js/normalize.js?v=0.10.8"></script>
+<script src="js/db.js?v=0.10.8"></script>
+<script src="js/terms.js?v=0.10.8"></script>
+<script src="js/chat.js?v=0.10.8"></script>
+<script src="js/wiki.js?v=0.10.8"></script>
+<script src="js/passages.js?v=0.10.8"></script>
+<script src="js/feedback.js?v=0.10.8"></script>
+<script src="js/net.js?v=0.10.8"></script>
+<script src="js/queue.js?v=0.10.8"></script>
+<script src="js/backup.js?v=0.10.8"></script>
+<script src="js/store.js?v=0.10.8"></script>
+<script src="js/embed.js?v=0.10.8"></script>
+<script src="js/llm.js?v=0.10.8"></script>
+<script src="js/rag.js?v=0.10.8"></script>
+<script src="js/growth.js?v=0.10.8"></script>
+<script src="js/sentiment.js?v=0.10.8"></script>
+<script src="js/vectors.js?v=0.10.8"></script>
+<script src="js/hybrid.js?v=0.10.8"></script>
+<script src="js/app.js?v=0.10.8"></script>
 </body>
 </html>
