@@ -81,6 +81,12 @@
   .msg.ai .body { white-space: pre-wrap; overflow-wrap: anywhere; }
   .msg.ai .title { font: 600 1.05rem var(--serif); letter-spacing: .03em; margin-bottom: 2px; display: block; }
   .msg.ai .sub { color: var(--sub); font-size: .9rem; }
+  .rate { display: flex; gap: 6px; margin-top: 8px; }
+  .rate button {
+    min-height: 44px; min-width: 44px; padding: 4px 12px; font-size: 1.1rem; line-height: 1;
+    background: none; border: 1px solid var(--line); border-radius: 12px; color: var(--ink);
+  }
+  .rate button[aria-pressed="true"] { background: var(--card); border-color: var(--ink); }
   .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
   .actions button {
     min-height: 44px; padding: 8px 16px; background: none;
@@ -254,12 +260,13 @@
   </div>
 </div>
 
-<script src="js/normalize.js?v=0.4.0"></script>
-<script src="js/db.js?v=0.4.0"></script>
-<script src="js/terms.js?v=0.4.0"></script>
-<script src="js/chat.js?v=0.4.0"></script>
-<script src="js/wiki.js?v=0.4.0"></script>
-<script src="js/passages.js?v=0.4.0"></script>
-<script src="js/app.js?v=0.4.0"></script>
+<script src="js/normalize.js?v=0.5.0"></script>
+<script src="js/db.js?v=0.5.0"></script>
+<script src="js/terms.js?v=0.5.0"></script>
+<script src="js/chat.js?v=0.5.0"></script>
+<script src="js/wiki.js?v=0.5.0"></script>
+<script src="js/passages.js?v=0.5.0"></script>
+<script src="js/feedback.js?v=0.5.0"></script>
+<script src="js/app.js?v=0.5.0"></script>
 </body>
 </html>

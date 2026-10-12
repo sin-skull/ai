@@ -132,9 +132,39 @@
       body.appendChild(row);
     }
 
+    if (opts.rate) body.appendChild(rateRow(opts.rate));
+
     el.messages.appendChild(msg);
     scrollDown();
     return msg;
+  }
+
+  // 👍/👎。rate: { type: 'term' | 'passage', id }
+  function rateRow(rate) {
+    const row = document.createElement('div');
+    row.className = 'rate';
+    const buttons = [
+      { value: 1, text: '👍', label: '役に立った' },
+      { value: -1, text: '👎', label: '違う・いらない' },
+    ].map((def) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = def.text;
+      b.setAttribute('aria-label', def.label);
+      b.setAttribute('aria-pressed', 'false');
+      b.addEventListener('click', async () => {
+        try {
+          const r = await AI.feedback.rate(db, rate.type, rate.id, def.value);
+          buttons.forEach((x, i) => x.setAttribute('aria-pressed', String(r.value === [1, -1][i])));
+          await render();
+        } catch (error) {
+          addMessage('ai', `評価を記録できませんでした。\n${error.message}`);
+        }
+      });
+      return b;
+    });
+    row.append(...buttons);
+    return row;
   }
 
   // ---- 記憶（DB）。開けなくても、入力欄とボタンは反応するようにしておく ----
@@ -201,16 +231,17 @@
   // ---- Wikipedia（ここだけが外部に通信する。ボタンを押したときだけ）----
   function showCandidate(query, list, index) {
     const c = list[index];
+    const learn = { term: query, definition: c.extract, source: { url: c.url, title: `Wikipedia「${c.title}」` } };
     const actions = [
       {
-        label: 'この内容で覚える',
+        label: '単語と文章で覚える',
         main: true,
-        run: () =>
-          save(
-            { term: query, definition: c.extract, source: { url: c.url, title: `Wikipedia「${c.title}」` } },
-            'ask'
-          ),
+        run: async () => {
+          await save(learn, 'ask');
+          await savePassage(c.extract, { title: c.title, sourceUrl: c.url, terms: [query] });
+        },
       },
+      { label: '単語だけ覚える', run: () => save(learn, 'ask') },
     ];
     if (index + 1 < list.length) {
       actions.push({ label: '次の候補', run: async () => showCandidate(query, list, index + 1) });
@@ -245,7 +276,7 @@
 
   // ---- 聞く ----
   function showPassage(p) {
-    addMessage('ai', p.body, { title: p.title, sub: `保存 ${formatDate(p.fetchedAt)}${p.sourceUrl ? `\n${p.sourceUrl}` : ''}` });
+    addMessage('ai', p.body, { rate: { type: 'passage', id: p.id }, title: p.title, sub: `保存 ${formatDate(p.fetchedAt)}${p.sourceUrl ? `\n${p.sourceUrl}` : ''}` });
   }
 
   async function ask(query) {
@@ -254,6 +285,7 @@
     if (record) {
       addMessage('ai', record.definition || '（定義はまだありません）', {
         title: record.term,
+        rate: { type: 'term', id: record.key },
         sub: `更新 ${formatDate(record.updatedAt)}${hits.length ? `\n保存した文章にも ${hits.length} 件あります。` : ''}`,
         actions: hits.map((h) => ({ label: h.passage.title, run: async () => showPassage(h.passage) })),
       });
