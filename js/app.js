@@ -4,6 +4,15 @@
   'use strict';
   const $ = (selector) => document.querySelector(selector);
 
+  // 読み込まれたスクリプトの版（index.html の ?v= と同じ。sw.js の VERSION とも揃えてある）。画面に出して、更新されたか確かめられるようにする
+  const VERSION = (() => {
+    try {
+      return new URL(document.currentScript.src).searchParams.get('v') || '不明';
+    } catch (_) {
+      return '不明';
+    }
+  })();
+
   // 古いファイルが混ざっていないか（キャッシュのずれ）。足りない部品があれば理由を出して止める
   const REQUIRED = ['#app', '#thread', '#messages', '#composer', '#input', '#send', '#drawer',
     '#scrim', '#menu', '#close', '#reset', '#search', '#count', '#terms', '#empty', '#tab-terms', '#tab-passages',
@@ -57,6 +66,30 @@
     importBtn: $('#import'),
     importFile: $('#import-file'),
   };
+
+  // 版の表示と、最新版の確認
+  const verEl = $('#version');
+  if (verEl) verEl.textContent = `バージョン ${VERSION}`;
+  const helloVer = $('#hello-ver');
+  if (helloVer) helloVer.textContent = `v${VERSION}`;
+  const updateBtn = $('#update-btn');
+  if (updateBtn) {
+    updateBtn.addEventListener('click', async () => {
+      if (navigator.onLine === false || (window.AI && AI.net && AI.net.isOffline())) {
+        if (verEl) verEl.textContent = `バージョン ${VERSION}\nオフライン中は、最新版を確認できません。`;
+        return;
+      }
+      updateBtn.disabled = true;
+      updateBtn.textContent = '確認しています…';
+      try {
+        const reg = navigator.serviceWorker && (await navigator.serviceWorker.getRegistration());
+        if (reg) await reg.update();
+      } catch (_) {
+        /* 確認できなくても、再読み込みはする */
+      }
+      location.reload(); // 画面はネットから最新を取る（取れなければ、保存済みの版で開く）
+    });
+  }
 
   // 古いブラウザ（matchMedia の addEventListener が無い）でも落ちないようにする
   function onChange(query, handler) {

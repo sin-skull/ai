@@ -79,6 +79,7 @@
     font: inherit; font-size: .9rem; padding: 0 12px; width: 100%;
   }
   #dsettings > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; margin-top: 4px; }
+  #version { margin: 10px 0 0; }
   #downloads, #weights { margin-top: 10px; }
   #weights summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
   #weights label.w { display: grid; grid-template-columns: 7.5em 1fr 3em; gap: 8px; align-items: center; min-height: 44px; }
@@ -275,6 +276,8 @@
         <button id="import" type="button">読み込む</button>
       </div>
       <input id="import-file" type="file" accept=".json,application/json" hidden>
+      <p id="version"></p>
+      <div class="row"><button id="update-btn" type="button">最新版を確認する</button></div>
       <details id="dsettings">
         <summary>設定と保存</summary>
         <p id="semantic"></p>
@@ -330,6 +333,7 @@
             <button class="chip" type="button" data-fill="AI = 人工知能">AI = 人工知能</button>
             <button class="chip" type="button" data-fill="AIとは？">AIとは？</button>
           </div>
+          <p id="hello-ver" style="font-size:.75rem;margin:28px 0 0"></p>
         </div>
       </div>
     </div>
@@ -346,24 +350,24 @@
   </div>
 </div>
 
-<script src="js/normalize.js?v=0.10.0"></script>
-<script src="js/db.js?v=0.10.0"></script>
-<script src="js/terms.js?v=0.10.0"></script>
-<script src="js/chat.js?v=0.10.0"></script>
-<script src="js/wiki.js?v=0.10.0"></script>
-<script src="js/passages.js?v=0.10.0"></script>
-<script src="js/feedback.js?v=0.10.0"></script>
-<script src="js/net.js?v=0.10.0"></script>
-<script src="js/queue.js?v=0.10.0"></script>
-<script src="js/backup.js?v=0.10.0"></script>
-<script src="js/store.js?v=0.10.0"></script>
-<script src="js/embed.js?v=0.10.0"></script>
-<script src="js/llm.js?v=0.10.0"></script>
-<script src="js/rag.js?v=0.10.0"></script>
-<script src="js/growth.js?v=0.10.0"></script>
-<script src="js/sentiment.js?v=0.10.0"></script>
-<script src="js/vectors.js?v=0.10.0"></script>
-<script src="js/hybrid.js?v=0.10.0"></script>
-<script src="js/app.js?v=0.10.0"></script>
+<script src="js/normalize.js?v=0.10.1"></script>
+<script src="js/db.js?v=0.10.1"></script>
+<script src="js/terms.js?v=0.10.1"></script>
+<script src="js/chat.js?v=0.10.1"></script>
+<script src="js/wiki.js?v=0.10.1"></script>
+<script src="js/passages.js?v=0.10.1"></script>
+<script src="js/feedback.js?v=0.10.1"></script>
+<script src="js/net.js?v=0.10.1"></script>
+<script src="js/queue.js?v=0.10.1"></script>
+<script src="js/backup.js?v=0.10.1"></script>
+<script src="js/store.js?v=0.10.1"></script>
+<script src="js/embed.js?v=0.10.1"></script>
+<script src="js/llm.js?v=0.10.1"></script>
+<script src="js/rag.js?v=0.10.1"></script>
+<script src="js/growth.js?v=0.10.1"></script>
+<script src="js/sentiment.js?v=0.10.1"></script>
+<script src="js/vectors.js?v=0.10.1"></script>
+<script src="js/hybrid.js?v=0.10.1"></script>
+<script src="js/app.js?v=0.10.1"></script>
 </body>
 </html>
