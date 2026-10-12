@@ -749,7 +749,7 @@
     if (tried && tried.value) {
       const wasPack = llmPackOf(tried.value.pack);
       await putSetting(TRY_KEY, null);
-      const raise = tried.value.stage === '回答の作成' && (answerCfg.load || 0) < AI.rag.LOAD_LEVELS.length - 1;
+      const raise = String(tried.value.stage || '').startsWith('回答の作成') && (answerCfg.load || 0) < AI.rag.LOAD_LEVELS.length - 1;
       answerCfg = { ...answerCfg, enabled: false, load: (answerCfg.load || 0) + (raise ? 1 : 0) };
       await saveAnswerCfg();
       addMessage('ai', `前回、回答モデル（${wasPack.label}）の${tried.value.stage || '読み込み'}中にアプリが落ちたようです。回答モデルはオフにしました。`, {
@@ -957,7 +957,10 @@
         result = await guarded(llmPackOf(answerCfg.pack), async (mark) => {
           await mark('回答の作成');
           return AI.rag.answer({
-            onProgress: (p) => {
+            // どの段階・どの量で落ちたかを、次の起動で分かるように、動かす直前に記録する
+            onProgress: async (p) => {
+              const step = p.phase === 'read' ? `塊${p.i}/${p.n}を読む` : p.phase === 'write' ? '仕上げ' : '1回で答える';
+              await mark(`回答の作成（${step}・${p.chars}字・答えの量${answerCfg.load || 0}）`);
               text.nodeValue = p.phase === 'read' ? `資料を分けて読んでいます…（${p.i}/${p.n}）` : `読んだ内容から答えを書いています…`;
               scrollDown();
             },

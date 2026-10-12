@@ -214,13 +214,15 @@
     return !t || /^(なし|無し|ありません|関係(する|の)?(こと|もの)?(は)?(ありません|ない))/.test(t) || isUnknown(t);
   };
 
+  const charsOf = (messages) => messages.reduce((sum, m) => sum + String(m.content || '').length, 0);
   const pause = (ms) => new Promise((r) => setTimeout(r, ms)); // 塊のあいだで少し休ませる（後片付けの時間）
 
   async function answerInPieces({ query, chunks, generator, persona, onToken, onProgress, maxTokens, history, lim }) {
     const notes = [];
     for (let i = 0; i < chunks.length; i++) {
-      if (onProgress) onProgress({ phase: 'read', i: i + 1, n: chunks.length });
-      const raw = await generator.generate(buildNoteMessages(query, chunks[i], history), { maxTokens: lim.noteTokens });
+      const noteMessages = buildNoteMessages(query, chunks[i], history);
+      if (onProgress) await onProgress({ phase: 'read', i: i + 1, n: chunks.length, chars: charsOf(noteMessages) });
+      const raw = await generator.generate(noteMessages, { maxTokens: lim.noteTokens });
       const note = tidy(raw, 2, 200);
       if (!isNone(note)) notes.push({ chunk: chunks[i], note });
       await pause(30);
@@ -237,8 +239,9 @@
       byPassage.get(key).parts.push(x.note);
     }
     const context = [...byPassage.values()].map((v, i) => ({ n: i + 1, passage: v.passage, text: v.parts.join('\n') }));
-    if (onProgress) onProgress({ phase: 'write', i: chunks.length, n: chunks.length });
-    const raw = (await generator.generate(buildMessages(query, context, persona, history), { maxTokens: maxTokens || lim.tokens, onToken })).trim();
+    const finalMessages = buildMessages(query, context, persona, history);
+    if (onProgress) await onProgress({ phase: 'write', i: chunks.length, n: chunks.length, chars: charsOf(finalMessages) });
+    const raw = (await generator.generate(finalMessages, { maxTokens: maxTokens || lim.tokens, onToken })).trim();
     const text = tidy(raw);
     const unknown = isUnknown(text);
     return {
@@ -274,6 +277,7 @@
       return answerInPieces({ query, chunks, generator, persona, onToken, onProgress, maxTokens, history, lim });
     }
     const messages = buildMessages(query, context, persona, history);
+    if (onProgress) await onProgress({ phase: 'single', i: 1, n: 1, chars: charsOf(messages) });
     const raw = (await generator.generate(messages, { maxTokens: maxTokens || lim.tokens, onToken })).trim();
     const text = tidy(raw);
     const unknown = isUnknown(text);
