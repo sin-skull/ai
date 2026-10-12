@@ -6,7 +6,7 @@
 
   // 古いファイルが混ざっていないか（キャッシュのずれ）。足りない部品があれば理由を出して止める
   const REQUIRED = ['#app', '#thread', '#messages', '#composer', '#input', '#send', '#drawer',
-    '#scrim', '#menu', '#close', '#reset', '#search', '#count', '#terms', '#empty'];
+    '#scrim', '#menu', '#close', '#reset', '#search', '#count', '#terms', '#empty', '#tab-terms', '#tab-passages'];
   const missing = REQUIRED.filter((s) => !$(s));
   if (missing.length) {
     window.__showFatal &&
@@ -30,6 +30,8 @@
     count: $('#count'),
     list: $('#terms'),
     empty: $('#empty'),
+    tabTerms: $('#tab-terms'),
+    tabPassages: $('#tab-passages'),
   };
 
   // 古いブラウザ（matchMedia の addEventListener が無い）でも落ちないようにする
@@ -141,7 +143,7 @@
     .open()
     .then((opened) => {
       db = opened;
-      return renderTerms();
+      return render();
     })
     .catch((error) => {
       addMessage('ai', `記憶を開けませんでした。\n${error.message}\nプライベートブラウズでは使えないことがあります。`);
@@ -184,7 +186,16 @@
     else if (result.status === 'created') addMessage('ai', `「${term}」を覚えました。`);
     else if (result.status === 'updated') addMessage('ai', `「${term}」を更新しました。`);
     else addMessage('ai', `「${term}」はすでに同じ内容で覚えています。`);
-    await renderTerms();
+    await render();
+  }
+
+  // 文章として保存する（確認のあとに呼ぶ）
+  async function savePassage(text, extra = {}) {
+    const p = await AI.passages.add(db, text, extra);
+    addMessage('ai', `文章として保存しました。\n「${p.title}」`, {
+      sub: '「文章」タブで見たり消したりできます。聞くと、この中からも探します。',
+    });
+    await render();
   }
 
   // ---- Wikipedia（ここだけが外部に通信する。ボタンを押したときだけ）----
@@ -233,12 +244,26 @@
   }
 
   // ---- 聞く ----
+  function showPassage(p) {
+    addMessage('ai', p.body, { title: p.title, sub: `保存 ${formatDate(p.fetchedAt)}${p.sourceUrl ? `\n${p.sourceUrl}` : ''}` });
+  }
+
   async function ask(query) {
     const record = await AI.terms.get(db, query);
+    const hits = await AI.passages.search(db, query, { limit: 5 });
     if (record) {
       addMessage('ai', record.definition || '（定義はまだありません）', {
         title: record.term,
-        sub: `更新 ${formatDate(record.updatedAt)}`,
+        sub: `更新 ${formatDate(record.updatedAt)}${hits.length ? `\n保存した文章にも ${hits.length} 件あります。` : ''}`,
+        actions: hits.map((h) => ({ label: h.passage.title, run: async () => showPassage(h.passage) })),
+      });
+      return;
+    }
+    if (hits.length) {
+      addMessage('ai', hits.map((h, i) => `${i + 1}. ${h.passage.title}\n   ${h.snippet}`).join('\n'), {
+        title: `保存した文章に ${hits.length} 件あります`,
+        sub: '押すと全文を表示します。',
+        actions: hits.map((h) => ({ label: h.passage.title, run: async () => showPassage(h.passage) })),
       });
       return;
     }
@@ -273,6 +298,16 @@
         actions: [
           { label: '覚える', main: true, run: () => save(parsed, 'ask') },
           { label: 'やめる', run: async () => addMessage('ai', '覚えませんでした。') },
+        ],
+      });
+      return;
+    }
+    if (parsed.type === 'note') {
+      addMessage('ai', '長い文章なので、文章として保存しますか？', {
+        sub: `${parsed.text.length}文字。保存すると、あとからキーワードで探せます。`,
+        actions: [
+          { label: '文章として保存', main: true, run: () => savePassage(parsed.text) },
+          { label: '保存しない', run: async () => addMessage('ai', '保存しませんでした。') },
         ],
       });
       return;
@@ -377,7 +412,7 @@
         }
         clearTimeout(timer);
         await AI.terms.remove(db, r.key);
-        await renderTerms();
+        await render();
       });
 
       li.append(term, del, def, meta);
@@ -388,7 +423,79 @@
     el.empty.textContent = all.length === 0 ? 'まだ何も覚えていません。' : '見つかりませんでした。';
     el.count.textContent = q ? `${shown.length} / ${all.length} 件` : `${all.length} 件`;
   }
-  el.search.addEventListener('input', renderTerms);
+
+  // ---- 文章の一覧（「文章」タブ）----
+  async function renderPassages() {
+    const total = await AI.passages.count(db);
+    const q = el.search.value.trim();
+    const shown = q
+      ? (await AI.passages.search(db, q, { limit: 200 })).map((h) => h.passage)
+      : await AI.passages.list(db);
+
+    el.list.textContent = '';
+    for (const p of shown) {
+      const li = document.createElement('li');
+
+      const title = document.createElement('span');
+      title.className = 'term';
+      title.textContent = p.title;
+
+      const body = document.createElement('p');
+      body.className = 'def clamp';
+      body.textContent = p.body;
+      body.title = 'タップで全文を開く／閉じる';
+      body.addEventListener('click', () => body.classList.toggle('clamp'));
+
+      const meta = document.createElement('span');
+      meta.className = 'meta';
+      meta.textContent = `保存 ${formatDate(p.fetchedAt)} ・ ${p.body.length}文字${p.sourceUrl ? ` ・ ${p.sourceUrl}` : ''}`;
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'del';
+      del.textContent = '消す';
+      del.setAttribute('aria-label', `${p.title} を消す`);
+      let timer = null;
+      del.addEventListener('click', async () => {
+        if (!del.classList.contains('armed')) {
+          del.classList.add('armed');
+          del.textContent = 'もう一度';
+          timer = setTimeout(() => {
+            del.classList.remove('armed');
+            del.textContent = '消す';
+          }, 3000);
+          return;
+        }
+        clearTimeout(timer);
+        await AI.passages.remove(db, p.id); // 単語は残る
+        await render();
+      });
+
+      li.append(title, del, body, meta);
+      el.list.appendChild(li);
+    }
+
+    el.empty.hidden = shown.length > 0;
+    el.empty.textContent = total === 0 ? 'まだ文章は保存していません。長い文章を貼って送ると、保存できます。' : '見つかりませんでした。';
+    el.count.textContent = q ? `${shown.length} / ${total} 件` : `${total} 件`;
+  }
+
+  // ---- タブ ----
+  let tab = 'terms';
+  function setTab(next) {
+    tab = next;
+    el.tabTerms.setAttribute('aria-selected', String(tab === 'terms'));
+    el.tabPassages.setAttribute('aria-selected', String(tab === 'passages'));
+    el.search.placeholder = tab === 'terms' ? '記憶を探す' : '文章を探す';
+    el.search.value = '';
+    return render();
+  }
+  function render() {
+    return tab === 'terms' ? renderTerms() : renderPassages();
+  }
+  el.tabTerms.addEventListener('click', () => setTab('terms'));
+  el.tabPassages.addEventListener('click', () => setTab('passages'));
+  el.search.addEventListener('input', render);
 
   fitInput();
 })();

@@ -59,4 +59,16 @@
     equal(p('今日は何ですか').type, 'ask');
     equal(p('AIは何？').type, 'ask');
   });
+
+  test('chat: 長い文章は文章として保存する候補になる（質問・明示の教えは優先）', () => {
+    const long = '機械学習は人工知能の一分野で、データから規則を学習する。'.repeat(4);
+    equal(AI.chat.parse(long), { type: 'note', text: long });
+    const multi = '見出し\n' + 'これは複数行のメモです。'.repeat(4);
+    equal(AI.chat.parse(multi).type, 'note');
+    equal(AI.chat.parse('猫は動物です。犬も動物です。').type, 'note', '2文以上');
+    equal(AI.chat.parse('猫は動物です。').type, 'teach', '1文は従来どおり');
+    equal(AI.chat.parse('短い\nメモ').type, 'ask', '短い複数行は文章扱いにしない');
+    equal(AI.chat.parse(`AI = ${long}`).type, 'teach', '明示の「=」が優先');
+    equal(AI.chat.parse(`${long}とは？`).type, 'ask', '質問が優先');
+  });
 })();

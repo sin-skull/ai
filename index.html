@@ -128,6 +128,13 @@
 
   .dhead { display: flex; align-items: center; padding: 6px 8px 0 16px; }
   .dhead h2 { flex: 1; margin: 0; font: 500 1.1rem var(--serif); letter-spacing: .06em; }
+  #tabs { display: flex; gap: 4px; padding: 8px 16px 0; }
+  #tabs button {
+    flex: 1; min-height: 44px; background: none; border: 1px solid var(--line); border-radius: 12px;
+    color: var(--sub); font: inherit; font-size: .95rem;
+  }
+  #tabs button[aria-selected="true"] { background: var(--card); color: var(--ink); border-color: var(--ink); }
+  #terms .def.clamp { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
   .dtools { padding: 8px 16px 4px; }
   #search {
     width: 100%; font: inherit; font-size: 16px; color: var(--ink); background: var(--card);
@@ -200,6 +207,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
       </button>
     </div>
+    <div id="tabs" role="tablist">
+      <button type="button" role="tab" id="tab-terms" aria-selected="true">単語</button>
+      <button type="button" role="tab" id="tab-passages" aria-selected="false">文章</button>
+    </div>
     <div class="dtools"><input id="search" type="search" placeholder="記憶を探す" aria-label="記憶を探す"></div>
     <div id="count"></div>
     <ul id="terms"></ul>
@@ -233,7 +244,7 @@
 
     <form id="composer" autocomplete="off">
       <div class="box">
-        <textarea id="input" rows="1" placeholder="覚えさせる・聞く" aria-label="メッセージ" enterkeyhint="send"></textarea>
+        <textarea id="input" rows="1" placeholder="覚えさせる・聞く・文章を貼る" aria-label="メッセージ" enterkeyhint="send"></textarea>
         <button id="send" type="submit" aria-label="送る" disabled>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
         </button>
@@ -243,11 +254,12 @@
   </div>
 </div>
 
-<script src="js/normalize.js?v=0.3.0"></script>
-<script src="js/db.js?v=0.3.0"></script>
-<script src="js/terms.js?v=0.3.0"></script>
-<script src="js/chat.js?v=0.3.0"></script>
-<script src="js/wiki.js?v=0.3.0"></script>
-<script src="js/app.js?v=0.3.0"></script>
+<script src="js/normalize.js?v=0.4.0"></script>
+<script src="js/db.js?v=0.4.0"></script>
+<script src="js/terms.js?v=0.4.0"></script>
+<script src="js/chat.js?v=0.4.0"></script>
+<script src="js/wiki.js?v=0.4.0"></script>
+<script src="js/passages.js?v=0.4.0"></script>
+<script src="js/app.js?v=0.4.0"></script>
 </body>
 </html>

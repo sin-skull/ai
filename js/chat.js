@@ -3,18 +3,22 @@
 // 戻り値:
 //   { type: 'empty' }
 //   { type: 'teach', term, definition, confirm }  … 覚えさせる。confirm=true なら保存前に確認する
+//   { type: 'note', text }                        … 長い文章。文章として保存するか確認する
 //   { type: 'ask', query }                        … 調べる（質問・単語だけの入力もここ）
 //
 // 読み取りの優先順位:
 //   1. 「単語 = 意味」「単語：意味」「単語: 意味」 … 迷いが無いので、そのまま保存してよい
 //   2. 質問（「AIとは？」「AIって何」など）
-//   3. 「AIは人工知能」「AIとは人工知能のこと」 … ふつうの文との区別がつかないので、確認してから保存
-//   4. それ以外は調べる
+//   3. 長い文章（NOTE_MIN 文字以上／2文以上／改行を含み一定以上）は文章として扱う
+//   4. 「AIは人工知能」「AIとは人工知能のこと」 … ふつうの文との区別がつかないので、確認してから保存
+//   5. それ以外は調べる
 (function (root) {
   'use strict';
   const AI = (root.AI = root.AI || {});
 
   const MAX_TERM = 40; // これより長い「単語」は、文として扱う
+  const NOTE_MIN = 80; // これ以上の長さは、文章として保存する候補にする
+  const NOTE_MIN_MULTILINE = 40; // 改行を含むなら、これ以上で候補にする
 
   const QUESTION_TAIL =
     /(とは何ですか|とは何|とはなに|とは|って何ですか|って何|ってなに|を教えてください|を教えて|について教えてください|について教えて|について|は何ですか|は何|はなに|ですか)\s*$/;
@@ -53,7 +57,13 @@
       return { type: 'ask', query: query || text.replace(/[?？]+\s*$/, '').trim() };
     }
 
-    // 3. 「AIは人工知能」型。ふつうの文かもしれないので確認つき
+    // 3. 長い文章
+    const sentences = (text.match(/[。.！!]/g) || []).length;
+    if (text.length >= NOTE_MIN || sentences >= 2 || (/\n/.test(text) && text.length >= NOTE_MIN_MULTILINE)) {
+      return { type: 'note', text };
+    }
+
+    // 4. 「AIは人工知能」型。ふつうの文かもしれないので確認つき
     const copula = text.match(/^(.+?)(?:とは|って|は)\s*([\s\S]+)$/);
     if (copula) {
       const term = copula[1].trim();
@@ -63,7 +73,7 @@
       }
     }
 
-    // 4. 単語だけ、などは調べる
+    // 5. 単語だけ、などは調べる
     return { type: 'ask', query: text };
   }
 
