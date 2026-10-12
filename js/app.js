@@ -994,15 +994,18 @@
         },
       });
     }
+    const seenModels = new Set(); // 同じモデルで形式違いの版は、ファイルを共有するので1行にまとめる
     for (const pack of AI.llm.PACKS) {
+      if (seenModels.has(pack.model)) continue;
+      seenModels.add(pack.model);
       const m = await AI.store.inspectModel(pack.model);
       if (!m.files) continue;
       rows.push({
         title: `回答モデル（${pack.label}）`,
-        note: answerCfg.enabled && answerCfg.pack === pack.id ? '使用中。消すと回答モデルはオフになります' : '',
+        note: answerCfg.enabled && llmPackOf(answerCfg.pack).model === pack.model ? '使用中。消すと回答モデルはオフになります' : '',
         bytes: m.bytes,
         remove: async () => {
-          if (answerCfg.enabled && answerCfg.pack === pack.id) await turnOffAnswer(false);
+          if (answerCfg.enabled && llmPackOf(answerCfg.pack).model === pack.model) await turnOffAnswer(false);
           await AI.store.removeModel(pack.model);
           addMessage('ai', '回答モデルを端末から消しました。');
         },
