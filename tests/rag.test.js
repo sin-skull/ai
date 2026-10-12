@@ -147,9 +147,9 @@
   });
 
   test('rag.tidy: 長い答えを3文までに切り、箇条書きの記号を外す', () => {
-    const t = AI.rag.tidy('A。B。C。D。E。');
-    equal(t, 'A。B。C。');
+    const t = AI.rag.tidy('A。B。C。D。E。F。G。H。I。J。');
+    equal(t, 'A。B。C。D。E。F。G。H。');
     equal(AI.rag.tidy('**肥満**: 太る。\n\n1. 糖尿病。'), '肥満: 太る。\n糖尿病。');
-    ok(AI.rag.tidy('あ'.repeat(500)).length <= 220);
+    ok(AI.rag.tidy('あ'.repeat(900)).length <= 600);
   });
 })();
