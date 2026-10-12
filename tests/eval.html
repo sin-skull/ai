@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ai 評価セット</title>
+<style>
+  body { font: 15px/1.7 system-ui, sans-serif; margin: 24px; max-width: 46em; }
+  h1 { font-size: 1.1rem; }
+  button { font: inherit; padding: 10px 18px; min-height: 44px; }
+  pre { white-space: pre-wrap; background: #f4f2ec; padding: 12px; border-radius: 8px; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>意味検索の評価</h1>
+<p>文章30件・質問36件で、キーワード／意味／ハイブリッドの順位を比べます。初回は約120MBのモデルを取得します（https で開いたときだけ動きます）。</p>
+<button id="go">実行</button> <button id="fake">疑似モデルで仕組みだけ確認</button>
+<pre id="log"></pre>
+<script src="../js/normalize.js"></script>
+<script src="../js/db.js"></script>
+<script src="../js/terms.js"></script>
+<script src="../js/net.js"></script>
+<script src="../js/passages.js"></script>
+<script src="../js/embed.js"></script>
+<script src="../js/vectors.js"></script>
+<script src="../js/hybrid.js"></script>
+<script src="eval/dataset.js"></script>
+<script src="eval/run.js"></script>
+<script>
+  const log = (t) => { document.getElementById('log').textContent += t + '\n'; };
+  async function go(fake) {
+    document.getElementById('log').textContent = '';
+    document.getElementById('go').disabled = document.getElementById('fake').disabled = true;
+    try { window.__result = await runEval(log, { fake }); window.__done = true; }
+    catch (e) { log('失敗: ' + e.message); window.__error = e.message; }
+    document.getElementById('go').disabled = document.getElementById('fake').disabled = false;
+  }
+  document.getElementById('go').onclick = () => go(false);
+  document.getElementById('fake').onclick = () => go(true);
+</script>
+</body>
+</html>

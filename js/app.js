@@ -7,7 +7,7 @@
   // 古いファイルが混ざっていないか（キャッシュのずれ）。足りない部品があれば理由を出して止める
   const REQUIRED = ['#app', '#thread', '#messages', '#composer', '#input', '#send', '#drawer',
     '#scrim', '#menu', '#close', '#reset', '#search', '#count', '#terms', '#empty', '#tab-terms', '#tab-passages',
-    '#tab-queue', '#mode', '#storage', '#backup-info', '#export', '#import', '#import-file'];
+    '#tab-queue', '#semantic', '#semantic-btn', '#semantic-sync', '#mode', '#storage', '#backup-info', '#export', '#import', '#import-file'];
   const missing = REQUIRED.filter((s) => !$(s));
   if (missing.length) {
     window.__showFatal &&
@@ -37,6 +37,9 @@
     tabPassages: $('#tab-passages'),
     tabQueue: $('#tab-queue'),
     mode: $('#mode'),
+    semantic: $('#semantic'),
+    semBtn: $('#semantic-btn'),
+    semSync: $('#semantic-sync'),
     storage: $('#storage'),
     backupInfo: $('#backup-info'),
     exportBtn: $('#export'),
@@ -184,6 +187,7 @@
     .then(async (opened) => {
       db = opened;
       await AI.net.load(db); // 前回のモードを引き継ぐ
+      await loadSemantic(); // 意味検索の設定を引き継ぐ
       await render();
       await renderFoot(true);
     })
@@ -240,6 +244,7 @@
       sub: '「文章」タブで見たり消したりできます。聞くと、この中からも探します。',
     });
     await render();
+    indexInBackground(p); // 意味検索がオンなら、ベクトルも作る（待たない）
   }
 
   // ---- Wikipedia（ここだけが外部に通信する。ボタンを押したときだけ）----
@@ -383,6 +388,209 @@
   });
   window.addEventListener('online', () => notifyPending().catch(() => {}));
 
+  // ---- 意味検索（言い換えでも見つける。モデルはブラウザの中で動かす）----
+  const SEMANTIC_KEY = 'semantic';
+  const SEMANTIC_MIN = 0.8; // これ未満の近さは「関係ない」として捨てる。評価セットで調整する（docs/EVAL.md）
+  let semantic = { enabled: false, pack: AI.embed.PACKS[0].id };
+  let provider = null;
+  let preparing = null; // 読み込み中のPromise（二重に読み込まない）
+  let semanticWarned = false;
+
+  const packOf = (id) => AI.embed.PACKS.find((p) => p.id === id) || AI.embed.PACKS[0];
+  const getSetting = (name) => AI.db.tx(db, 'settings', 'readonly', (t) => AI.db.rq(t.objectStore('settings').get(name)));
+  const putSetting = (name, value) =>
+    AI.db.tx(db, 'settings', 'readwrite', (t) => AI.db.rq(t.objectStore('settings').put({ name, value })));
+
+  async function loadSemantic() {
+    const row = await getSetting(SEMANTIC_KEY);
+    if (row && row.value && row.value.enabled) {
+      semantic = row.value;
+      provider = AI.embed.transformersProvider(packOf(semantic.pack));
+    }
+  }
+
+  // 書き換えられる進捗メッセージ
+  function progressMessage(text) {
+    const msg = addMessage('ai', text);
+    const body = msg.querySelector('.body');
+    return {
+      set(t) {
+        body.childNodes[0].nodeValue = t;
+      },
+      remove() {
+        msg.remove();
+      },
+    };
+  }
+
+  const megabytes = (n) => `${(n / 1024 / 1024).toFixed(0)}MB`;
+  function downloadProgress(pm) {
+    const files = new Map();
+    return (info) => {
+      files.set(info.label, info);
+      let loaded = 0;
+      let total = 0;
+      files.forEach((f) => {
+        loaded += f.loaded;
+        total += f.total;
+      });
+      if (total) pm.set(`モデルをダウンロードしています… ${Math.min(100, Math.round((loaded / total) * 100))}%（${megabytes(loaded)} / ${megabytes(total)}）`);
+    };
+  }
+
+  async function ensureReady(onProgress) {
+    if (!provider) return false;
+    if (provider.ready) return true;
+    if (!preparing) preparing = provider.prepare(onProgress).finally(() => (preparing = null));
+    await preparing;
+    return provider.ready;
+  }
+
+  // 保存した文章を探す。意味検索がオンならキーワードと合わせる。使えないときはキーワードだけ
+  async function searchPassages(query, limit = 5) {
+    if (!(semantic.enabled && provider)) return AI.passages.search(db, query, { limit });
+    let note = null;
+    try {
+      if (!provider.ready) note = progressMessage('意味検索の準備をしています…');
+      await ensureReady();
+    } catch (error) {
+      if (!semanticWarned) {
+        semanticWarned = true;
+        addMessage('ai', `${error.message}\nキーワード検索だけで探します。`);
+      }
+    }
+    if (note) note.remove();
+    const found = await AI.hybrid.search(db, query, { provider: provider.ready ? provider : null, limit, minSemantic: SEMANTIC_MIN });
+    return found;
+  }
+
+  // 文章を1件保存したあと、その分のベクトルを作る（失敗しても保存は有効。あとで「未作成を作る」で補える）
+  async function indexInBackground(passage) {
+    if (!(semantic.enabled && provider)) return;
+    try {
+      await ensureReady();
+      await AI.vectors.indexPassage(db, passage, provider);
+      await renderSemantic();
+    } catch (_) {
+      await renderSemantic().catch(() => {});
+    }
+  }
+
+  async function renderSemantic() {
+    if (!db) return;
+    if (!semantic.enabled) {
+      const pack = packOf(semantic.pack);
+      el.semantic.textContent = `意味検索：オフ\n言い換えでも探せるようになります（約${pack.approxMB}MB・Wi-Fi推奨）`;
+      el.semBtn.textContent = '有効にする';
+      el.semSync.hidden = true;
+      return;
+    }
+    const st = await AI.vectors.status(db, provider);
+    el.semantic.textContent = `意味検索：オン（${packOf(semantic.pack).label}）\n作成済み ${st.indexed}/${st.total} 件${st.stale ? `（未作成 ${st.stale} 件）` : ''}`;
+    el.semBtn.textContent = 'オフにする';
+    el.semSync.hidden = st.stale === 0;
+  }
+
+  async function enableSemantic() {
+    setDrawer(false);
+    if (AI.net.isOffline() || navigator.onLine === false) {
+      addMessage('ai', 'モデルのダウンロードにはネットが要ります。オンラインにしてから、もう一度どうぞ。');
+      return;
+    }
+    const pack = packOf(semantic.pack);
+    let free = '';
+    try {
+      const e = await navigator.storage.estimate();
+      if (e.quota) free = `\n端末の保存領域の目安：あと ${megabytes(Math.max(0, e.quota - (e.usage || 0)))}`;
+    } catch (_) {
+      /* 取れなくても進める */
+    }
+    addMessage('ai', `意味検索を有効にします。\nモデル「${pack.label}」を、約${pack.approxMB}MBダウンロードします。${free}`, {
+      sub: `通信先：${pack.hosts.join('、')}\n送るのはモデルの取得だけで、記憶や質問は送りません。取得後は端末に保存され、オフラインでも使えます。`,
+      actions: [
+        { label: 'ダウンロードして有効にする', main: true, run: () => runEnable(pack) },
+        { label: 'やめる', run: async () => addMessage('ai', '有効にしませんでした。') },
+      ],
+    });
+  }
+
+  async function runEnable(pack) {
+    const pm = progressMessage('準備しています…');
+    const candidate = AI.embed.transformersProvider(pack);
+    try {
+      await candidate.prepare(downloadProgress(pm));
+      pm.set('動作を確かめています…');
+      await candidate.embed(['動作確認'], 'query'); // 実際に1回動かして、使えることを確かめる
+    } catch (error) {
+      pm.remove();
+      addMessage('ai', `意味検索を有効にできませんでした。\n${error.message}`);
+      return;
+    }
+    provider = candidate;
+    semantic = { enabled: true, pack: pack.id };
+    semanticWarned = false;
+    await putSetting(SEMANTIC_KEY, semantic);
+    const n = await AI.vectors.reindex(db, provider, {
+      onProgress: ({ done, total }) => pm.set(`文章のベクトルを作っています… ${done}/${total}`),
+    });
+    pm.remove();
+    addMessage('ai', `意味検索が使えるようになりました。保存済みの文章 ${n} 件を処理しました。`, {
+      sub: '言い換えた質問でも、近い内容の文章を探します。',
+    });
+    await renderFoot(false);
+  }
+
+  function disableSemantic() {
+    setDrawer(false);
+    const off = async (wipe) => {
+      semantic = { ...semantic, enabled: false };
+      await putSetting(SEMANTIC_KEY, semantic);
+      if (wipe) {
+        await AI.vectors.removeAll(db);
+        try {
+          if (window.caches) {
+            await caches.delete('transformers-cache'); // 取得したモデル
+            await caches.delete(AI.embed.LIB_CACHE); // 実行用の本体
+          }
+        } catch (_) {
+          /* 消せなくても無効にはなっている */
+        }
+      }
+      provider = null;
+      addMessage('ai', wipe ? '意味検索をオフにして、ベクトルとモデルを端末から消しました。' : '意味検索をオフにしました。ベクトルとモデルは残してあります。');
+      await renderFoot(false);
+    };
+    addMessage('ai', '意味検索をオフにしますか？', {
+      sub: '消しても、保存した単語や文章は残ります。',
+      actions: [
+        { label: 'オフにする（残す）', main: true, run: () => off(false) },
+        { label: 'オフにして全て消す', run: () => off(true) },
+        { label: 'やめる', run: async () => {} },
+      ],
+    });
+  }
+
+  async function runSync() {
+    setDrawer(false);
+    if (!(semantic.enabled && provider)) return;
+    const pm = progressMessage('ベクトルを作っています…');
+    try {
+      await ensureReady(downloadProgress(pm));
+      const n = await AI.vectors.reindex(db, provider, {
+        onProgress: ({ done, total }) => pm.set(`ベクトルを作っています… ${done}/${total}`),
+      });
+      pm.remove();
+      addMessage('ai', `${n} 件のベクトルを作りました。`);
+    } catch (error) {
+      pm.remove();
+      addMessage('ai', `ベクトルを作れませんでした。\n${error.message}`);
+    }
+    await renderSemantic();
+  }
+
+  el.semBtn.addEventListener('click', () => (semantic.enabled ? disableSemantic() : enableSemantic()));
+  el.semSync.addEventListener('click', runSync);
+
   // ---- 聞く ----
   function showPassage(p) {
     addMessage('ai', p.body, { rate: { type: 'passage', id: p.id }, title: p.title, sub: `保存 ${formatDate(p.fetchedAt)}${p.sourceUrl ? `\n${p.sourceUrl}` : ''}${p.license ? `（${p.license}）` : ''}` });
@@ -390,7 +598,7 @@
 
   async function ask(query) {
     const record = await AI.terms.get(db, query);
-    const hits = await AI.passages.search(db, query, { limit: 5 });
+    const hits = await searchPassages(query);
     if (record) {
       addMessage('ai', record.definition || '（定義はまだありません）', {
         title: record.term,
@@ -401,7 +609,7 @@
       return;
     }
     if (hits.length) {
-      addMessage('ai', hits.map((h, i) => `${i + 1}. ${h.passage.title}\n   ${h.snippet}`).join('\n'), {
+      addMessage('ai', hits.map((h, i) => `${i + 1}. ${h.passage.title}${h.via && !h.via.includes('keyword') ? '〔意味が近い〕' : ''}\n   ${h.snippet}`).join('\n'), {
         title: `保存した文章に ${hits.length} 件あります`,
         sub: '押すと全文を表示します。',
         actions: hits.map((h) => ({ label: h.passage.title, run: async () => showPassage(h.passage) })),
@@ -679,6 +887,7 @@
     } catch (_) {
       parts.push('保存領域の状態は取得できませんでした');
     }
+    await renderSemantic();
     const note = installed() ? '' : '\nホーム画面に追加すると、消えにくくなります。';
     el.storage.textContent = parts.join(' ／ ') + note;
 
@@ -762,6 +971,7 @@
         : `統合しました。単語は新規 ${r.terms.added} 件・既存と統合 ${r.terms.merged} 件、文章は新規 ${r.passages.added} 件（同じ内容 ${r.passages.skipped} 件は重ねていません）。`);
       await render();
       await renderFoot(false);
+      if (semantic.enabled) runSync(); // 読み込んだ文章のベクトルを作る
     };
     addMessage('ai', `「${file.name}」を読み込みます。\n単語 ${counts.terms} 件、文章 ${counts.passages} 件。`, {
       sub: '統合：今の記憶を残して足します。置き換え：今の記憶は全て消えます。',

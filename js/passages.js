@@ -17,6 +17,7 @@
   const { tx, rq } = AI.db;
 
   const TITLE_MAX = 30;
+  const FUZZY_MIN = 0.4; // ゆるい検索で、質問の2文字の並び（内容を表すもの）のうちこの割合以上、かつ2つ以上を含む文章だけ残す
 
   // 正規化した文字列から、空白を含まない2文字の並び（1文字だけなら1文字）を重複なしで取る
   function grams(text) {
@@ -131,7 +132,40 @@
     return (from > 0 ? '…' : '') + piece + (from + width * 2 < text.length ? '…' : '');
   }
 
+  // ゆるい検索：質問に含まれる2文字の並びのうち、一定割合以上を含む文章を、割合が高い順に。
+  // 日本語の質問は空白で区切れないので、文全体が一続きで本文に入っていなくても拾えるようにする。
+  async function fuzzy(db, query, limit) {
+    // ひらがなだけの2文字（「った」「には」など）は助詞や活用が多く、内容を表さないので、数えない
+    const all = grams(query);
+    const informative = all.filter((g) => /[^\u3041-\u309f\s]/.test(g));
+    const qgrams = informative.length >= 2 ? informative : all;
+    if (qgrams.length < 2) return [];
+    const counts = new Map();
+    await tx(db, 'ngram', 'readonly', async (t) => {
+      const index = t.objectStore('ngram');
+      for (const gram of qgrams) {
+        const entry = await rq(index.get(gram));
+        if (entry) for (const id of entry.ids) counts.set(id, (counts.get(id) || 0) + 1);
+      }
+    });
+    const ranked = [...counts.entries()]
+      .map(([id, n]) => ({ id, coverage: n / qgrams.length }))
+      .filter((x) => x.coverage >= FUZZY_MIN && x.coverage * qgrams.length >= 2)
+      .sort((a, b) => b.coverage - a.coverage)
+      .slice(0, limit);
+    const out = [];
+    for (const { id, coverage } of ranked) {
+      const passage = await get(db, id);
+      if (!passage) continue;
+      const text = AI.normalizeTerm(`${passage.title}\n${passage.body}`);
+      const first = qgrams.find((g) => text.includes(g)) || qgrams[0];
+      out.push({ passage, hits: coverage, snippet: snippet(passage.body, first), fuzzy: true });
+    }
+    return out;
+  }
+
   // 空白で区切った語を全て含む文章を探す。戻り値: [{ passage, hits, snippet }]（一致が多い順）
+  // 1件も無いときは、ゆるい検索（fuzzy: true の結果）に切り替える。options.fuzzy === false で切る。
   async function search(db, query, options = {}) {
     const words = AI.normalizeTerm(query).split(' ').filter(Boolean);
     if (!words.length) return [];
@@ -163,7 +197,9 @@
       const hits = words.reduce((n, w) => n + haystack.split(w).length - 1, 0);
       results.push({ passage, hits, snippet: snippet(passage.body, words[0]) });
     }
-    return results.sort((a, b) => b.hits - a.hits || b.passage.fetchedAt - a.passage.fetchedAt).slice(0, limit);
+    const strict = results.sort((a, b) => b.hits - a.hits || b.passage.fetchedAt - a.passage.fetchedAt).slice(0, limit);
+    if (strict.length || options.fuzzy === false) return strict;
+    return fuzzy(db, query, limit);
   }
 
   AI.passages = { grams, add, get, list, count, remove, search };

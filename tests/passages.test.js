@@ -49,7 +49,7 @@
   test('passages: 2-gram が揃っていても連続していなければ見つからない', () =>
     withDb(async (db) => {
       await AI.passages.add(db, '人工の知能');
-      equal(await AI.passages.search(db, '人工知能'), [], '人工・知能 は別々に出てくるだけ');
+      equal(await AI.passages.search(db, '人工知能', { fuzzy: false }), [], '人工・知能 は別々に出てくるだけ（厳密な検索では出ない）');
     }));
 
   test('passages: 一致が多い文章が先に出て、抜粋に一致箇所が含まれる', () =>
@@ -68,7 +68,7 @@
       equal((await AI.passages.search(db, '共通')).length, 2);
       equal(await AI.passages.remove(db, a.id), 1);
       equal((await AI.passages.search(db, '共通')).map((r) => r.passage.id), [b.id]);
-      equal(await AI.passages.search(db, 'Aだけ'), []);
+      equal(await AI.passages.search(db, 'Aだけ', { fuzzy: false }), []);
       equal(await AI.passages.remove(db, a.id), 0, '二重削除は0件');
       await AI.passages.remove(db, [b.id]);
       equal(await all(db, 'ngram'), [], '全て消えたらインデックスも残らない');
@@ -109,4 +109,23 @@
       await AI.db.deleteDatabase(name);
     }
   });
+
+  test('passages: 文全体が本文に無くても、含まれる語の割合で見つかる（ゆるい検索）', () =>
+    withDb(async (db) => {
+      await AI.passages.add(db, '徳川家康が1603年に開いた武家政権。約260年続いた。', { title: '江戸幕府' });
+      await AI.passages.add(db, '光合成は植物が光で養分を作る反応。', { title: '光合成' });
+      const r = await AI.passages.search(db, '家康が作った政権');
+      equal(r.map((x) => x.passage.title), ['江戸幕府']);
+      ok(r[0].fuzzy === true && r[0].hits >= 0.4);
+      equal((await AI.passages.search(db, '家康が作った政権', { fuzzy: false })), [], 'fuzzy:false なら従来どおり');
+      equal(await AI.passages.search(db, '全く関係ない話題について'), [], '一致が足りなければ出さない');
+    }));
+
+  test('passages: 厳密に見つかるときは、ゆるい検索を混ぜない', () =>
+    withDb(async (db) => {
+      await AI.passages.add(db, '光合成は植物が行う。', { title: 'A' });
+      await AI.passages.add(db, '光合成の話に近い別の文。', { title: 'B' });
+      const r = await AI.passages.search(db, '光合成');
+      ok(r.length === 2 && r.every((x) => !x.fuzzy));
+    }));
 })();
