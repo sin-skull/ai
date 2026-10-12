@@ -51,6 +51,7 @@
     wFresh: $('#w-fresh'),
     wReset: $('#w-reset'),
     mode: $('#mode'),
+    auto: $('#auto'),
     semantic: $('#semantic'),
     semBtn: $('#semantic-btn'),
     semSync: $('#semantic-sync'),
@@ -238,6 +239,9 @@
       await AI.net.load(db); // 前回のモードを引き継ぐ
       await loadSemantic(); // 意味検索の設定を引き継ぐ
       await loadAnswer(); // 回答モデルの設定を引き継ぐ
+      const autoRow = await getSetting(AUTO_KEY);
+      autoSearch = !!(autoRow && autoRow.value);
+      renderAuto();
       weights = await AI.growth.loadWeights(db); // 並び順の重み
       renderWeights();
       await render();
@@ -1093,6 +1097,83 @@
     });
   }
 
+  // 保存した文章が見つかったとき：回答モデルがあれば文章で、なければ抜き出しと一覧で答える
+  async function answerFromHits(query, hits) {
+    if (answerCfg.enabled && generator && (await answerWithModel(query, hits))) return;
+    const picked = await AI.rag.extractAnswer({ query, hits }).catch(() => null);
+    const lead = picked ? `〔抜き出し〕${picked.text}\n（「${hits[0].passage.title}」より。文章から文を抜き出しただけで、答えとは限りません）\n\n` : '';
+    addMessage('ai', lead + hits.map((h, i) => `${i + 1}. ${h.passage.title}${h.via && !h.via.includes('keyword') ? '〔意味が近い〕' : ''}\n   ${h.snippet}`).join('\n'), {
+      title: `保存した文章に ${hits.length} 件あります`,
+      sub: '押すと全文を表示します。',
+      actions: hits.map((h) => ({ label: h.passage.title, run: async () => showPassage(h.passage) })),
+    });
+    return;
+  }
+
+  // ---- 知らないことを自動で調べる（質問の下のスイッチ。初期はオフ）----
+  const AUTO_KEY = 'autosearch';
+  let autoSearch = false;
+  const renderAuto = () => {
+    el.auto.setAttribute('aria-pressed', String(autoSearch));
+    el.auto.textContent = `知らないことは自動で調べる：${autoSearch ? 'オン' : 'オフ'}`;
+  };
+  el.auto.addEventListener('click', async () => {
+    await dbReady;
+    if (!db) return;
+    autoSearch = !autoSearch;
+    renderAuto();
+    await putSetting(AUTO_KEY, autoSearch);
+    if (autoSearch) {
+      addMessage('ai', '自動で調べるをオンにしました。', {
+        sub: '保存した記憶に無い質問は、確認なしでWikipediaに送ります。一番近い記事を文章として保存し、その場で答えます。オフライン中は送りません。',
+      });
+    }
+  });
+
+  // 保存した記憶に無い質問をWikipediaで調べ、一番近い記事を保存して答える。答えまで出せたら true
+  async function autoLearn(query) {
+    if (AI.net.isOffline() || navigator.onLine === false) return false;
+    const note = progressMessage(`Wikipediaで「${AI.wiki.searchTerm(query)}」を調べています…`);
+    let list;
+    try {
+      list = await AI.wiki.search(query);
+    } catch (_) {
+      note.remove();
+      return false; // 繋がらなければ、いつもの案内に戻る
+    }
+    note.remove();
+    if (!list.length) return false;
+    const c = list[0];
+    const p = await AI.passages.add(db, c.extract, { title: c.title, sourceUrl: c.url, license: WIKI_LICENSE, terms: [query] });
+    await AI.queue.resolve(db, query);
+    await render();
+    indexInBackground(p);
+    addMessage('ai', `Wikipedia「${c.title}」を文章として保存しました。`, {
+      sub: '記事が違うときは、取り消して別の候補を選べます。',
+      actions: [
+        {
+          label: '違う記事にする',
+          run: async () => {
+            await AI.passages.remove(db, p.id);
+            await render();
+            showCandidate(query, list, list.length > 1 ? 1 : 0);
+          },
+        },
+        {
+          label: '保存を取り消す',
+          run: async () => {
+            await AI.passages.remove(db, p.id);
+            await render();
+            addMessage('ai', '取り消しました。');
+          },
+        },
+      ],
+    });
+    const hits = [{ passage: p, snippet: p.body.slice(0, 80), score: 1, via: ['keyword'] }];
+    await answerFromHits(query, hits);
+    return true;
+  }
+
   async function ask(query) {
     const record = await AI.terms.get(db, query);
     const hits = await searchPassages(query);
@@ -1107,17 +1188,8 @@
       });
       return;
     }
-    if (hits.length) {
-      if (answerCfg.enabled && generator && (await answerWithModel(query, hits))) return;
-      const picked = await AI.rag.extractAnswer({ query, hits }).catch(() => null);
-      const lead = picked ? `〔抜き出し〕${picked.text}\n（「${hits[0].passage.title}」より。文章から文を抜き出しただけで、答えとは限りません）\n\n` : '';
-      addMessage('ai', lead + hits.map((h, i) => `${i + 1}. ${h.passage.title}${h.via && !h.via.includes('keyword') ? '〔意味が近い〕' : ''}\n   ${h.snippet}`).join('\n'), {
-        title: `保存した文章に ${hits.length} 件あります`,
-        sub: '押すと全文を表示します。',
-        actions: hits.map((h) => ({ label: h.passage.title, run: async () => showPassage(h.passage) })),
-      });
-      return;
-    }
+    if (hits.length) return answerFromHits(query, hits);
+    if (autoSearch && (await autoLearn(query))) return;
 
     await notKnown(query, {});
   }
@@ -1165,6 +1237,15 @@
     lastAnswer = null; // 言葉での評価は、答えの直後の1回だけ
     const sent = AI.sentiment.detect(text);
     if (sent.value && previous) return applySentiment(sent, previous);
+    const questions = AI.chat.splitQuestions(text);
+    if (questions.length > 1) {
+      for (let i = 0; i < questions.length; i++) {
+        const q = AI.chat.parse(questions[i]);
+        addMessage('ai', `(${i + 1}/${questions.length}) ${questions[i]}`);
+        await ask(q.query || questions[i]);
+      }
+      return;
+    }
     const parsed = AI.chat.parse(text);
     if (parsed.type === 'teach') {
       if (!parsed.confirm) return save(parsed, 'ask');

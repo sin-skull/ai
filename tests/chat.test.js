@@ -71,4 +71,22 @@
     equal(AI.chat.parse(`AI = ${long}`).type, 'teach', '明示の「=」が優先');
     equal(AI.chat.parse(`${long}とは？`).type, 'ask', '質問が優先');
   });
+
+  test('chat.splitQuestions: 質問が複数あれば分ける（改行／？の後ろ）', () => {
+    const eq = (a, b) => equal(JSON.stringify(a), JSON.stringify(b));
+    eq(AI.chat.splitQuestions('光合成とは？ 葉緑体って何？'), ['光合成とは？', '葉緑体って何？']);
+    eq(AI.chat.splitQuestions('太陽はなぜ光るの？\n月は何でできてる？'), ['太陽はなぜ光るの？', '月は何でできてる？']);
+  });
+
+  test('chat.splitQuestions: 質問でないものが混じる／1つだけなら分けない', () => {
+    const eq = (a, b) => equal(JSON.stringify(a), JSON.stringify(b));
+    eq(AI.chat.splitQuestions('光合成とは？'), ['光合成とは？']);
+    eq(AI.chat.splitQuestions('AI = 人工知能\n光合成とは？'), ['AI = 人工知能\n光合成とは？']);
+    eq(AI.chat.splitQuestions('今日は晴れ。光合成とは？'), ['今日は晴れ。光合成とは？']);
+  });
+
+  test('chat.splitQuestions: 多すぎる（6個以上）ときは分けない', () => {
+    const t = Array.from({ length: 6 }, (_, i) => `質問${i}？`).join('');
+    equal(AI.chat.splitQuestions(t).length, 1);
+  });
 })();

@@ -77,5 +77,26 @@
     return { type: 'ask', query: text };
   }
 
-  AI.chat = { parse };
+  // 質問の形をしているか（？で終わる、または「〜とは」「〜を教えて」など）。1回で複数聞くときの区切りに使う
+  function isQuestion(input) {
+    const text = String(input ?? '').trim();
+    return !!text && !/[=＝：]/.test(text) && (/[?？]\s*$/.test(text) || QUESTION_TAIL.test(text));
+  }
+
+  // 1回の送信に複数の質問が入っていたら分ける（改行、または「？」の後ろで区切る）。
+  // 全部が質問のときだけ分ける。1つでも質問でないものが混じるときは、分けない（文章として扱う）
+  const MAX_QUESTIONS = 5;
+  function splitQuestions(input) {
+    const text = String(input ?? '').trim();
+    if (!text) return [text];
+    const parts = text
+      .split(/\n+/)
+      .flatMap((line) => line.match(/[^?？]+[?？]*/g) || [])
+      .map((x) => x.trim())
+      .filter(Boolean);
+    if (parts.length < 2 || parts.length > MAX_QUESTIONS) return [text];
+    return parts.every(isQuestion) ? parts : [text];
+  }
+
+  AI.chat = { parse, isQuestion, splitQuestions };
 })(typeof globalThis !== 'undefined' ? globalThis : window);
