@@ -64,7 +64,7 @@
   #mode::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #5a9a5f; }
   #mode[data-mode="offline"] { color: var(--ink); border-color: var(--ink); }
   #mode[data-mode="offline"]::before { background: var(--accent); }
-  #dfoot { border-top: 1px solid var(--line); padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); font-size: .8rem; color: var(--sub); }
+  #dfoot { border-top: 1px solid var(--line); padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); font-size: .8rem; color: var(--sub); max-height: 52vh; max-height: 52dvh; overflow-y: auto; overscroll-behavior: contain; }
   #dfoot p { margin: 0 0 6px; overflow-wrap: anywhere; white-space: pre-line; }
   #dfoot .warn { color: var(--danger); }
   #dfoot .row { display: flex; gap: 8px; margin-top: 8px; }
@@ -72,6 +72,18 @@
     flex: 1; min-height: 44px; background: none; border: 1px solid var(--line); border-radius: 12px; font-size: .9rem;
   }
   #dfoot button:hover { background: var(--hover); }
+  #tone { display: grid; gap: 6px; margin-top: 10px; }
+  #tone[hidden], #persona-custom[hidden] { display: none; }
+  #dfoot select, #dfoot input[type="text"] {
+    min-height: 44px; border: 1px solid var(--line); border-radius: 12px; background: none; color: var(--ink);
+    font: inherit; font-size: .9rem; padding: 0 12px; width: 100%;
+  }
+  #downloads { margin-top: 10px; }
+  #downloads summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+  .dl { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 6px 0; border-top: 1px solid var(--line); }
+  .dl span { white-space: pre-line; overflow-wrap: anywhere; }
+  #dfoot .dl button { flex: 0 0 auto; min-width: 88px; }
+  #dfoot .dl button.sure { color: var(--danger); border-color: var(--danger); }
   .icon {
     width: 44px; height: 44px; display: grid; place-items: center;
     background: none; border: 0; border-radius: 12px; color: var(--sub);
@@ -250,6 +262,19 @@
         <button id="semantic-btn" type="button">意味検索を有効にする</button>
         <button id="semantic-sync" type="button" hidden>未作成を作る</button>
       </div>
+      <p id="llm" style="margin-top:10px"></p>
+      <div class="row">
+        <button id="llm-btn" type="button">回答モデルを有効にする</button>
+      </div>
+      <div id="tone" hidden>
+        <label for="persona">口調</label>
+        <select id="persona"></select>
+        <input id="persona-custom" type="text" maxlength="80" placeholder="例：関西弁で、少し元気に" hidden>
+      </div>
+      <details id="downloads">
+        <summary>端末に保存したもの</summary>
+        <div id="dl-list"></div>
+      </details>
       <p id="storage" style="margin-top:10px"></p>
       <p id="backup-info"></p>
       <div class="row">
@@ -298,19 +323,22 @@
   </div>
 </div>
 
-<script src="js/normalize.js?v=0.8.0"></script>
-<script src="js/db.js?v=0.8.0"></script>
-<script src="js/terms.js?v=0.8.0"></script>
-<script src="js/chat.js?v=0.8.0"></script>
-<script src="js/wiki.js?v=0.8.0"></script>
-<script src="js/passages.js?v=0.8.0"></script>
-<script src="js/feedback.js?v=0.8.0"></script>
-<script src="js/net.js?v=0.8.0"></script>
-<script src="js/queue.js?v=0.8.0"></script>
-<script src="js/backup.js?v=0.8.0"></script>
-<script src="js/embed.js?v=0.8.0"></script>
-<script src="js/vectors.js?v=0.8.0"></script>
-<script src="js/hybrid.js?v=0.8.0"></script>
-<script src="js/app.js?v=0.8.0"></script>
+<script src="js/normalize.js?v=0.9.0"></script>
+<script src="js/db.js?v=0.9.0"></script>
+<script src="js/terms.js?v=0.9.0"></script>
+<script src="js/chat.js?v=0.9.0"></script>
+<script src="js/wiki.js?v=0.9.0"></script>
+<script src="js/passages.js?v=0.9.0"></script>
+<script src="js/feedback.js?v=0.9.0"></script>
+<script src="js/net.js?v=0.9.0"></script>
+<script src="js/queue.js?v=0.9.0"></script>
+<script src="js/backup.js?v=0.9.0"></script>
+<script src="js/store.js?v=0.9.0"></script>
+<script src="js/embed.js?v=0.9.0"></script>
+<script src="js/llm.js?v=0.9.0"></script>
+<script src="js/rag.js?v=0.9.0"></script>
+<script src="js/vectors.js?v=0.9.0"></script>
+<script src="js/hybrid.js?v=0.9.0"></script>
+<script src="js/app.js?v=0.9.0"></script>
 </body>
 </html>

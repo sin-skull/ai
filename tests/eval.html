@@ -15,17 +15,22 @@
 <h1>意味検索の評価</h1>
 <p>文章30件・質問36件で、キーワード／意味／ハイブリッドの順位を比べます。初回は約120MBのモデルを取得します（https で開いたときだけ動きます）。</p>
 <button id="go">実行</button> <button id="fake">疑似モデルで仕組みだけ確認</button>
+<button id="rag">回答も評価（約520MB追加）</button> <button id="ragfake">回答の仕組みだけ確認</button>
 <pre id="log"></pre>
 <script src="../js/normalize.js"></script>
 <script src="../js/db.js"></script>
 <script src="../js/terms.js"></script>
 <script src="../js/net.js"></script>
 <script src="../js/passages.js"></script>
+<script src="../js/store.js"></script>
 <script src="../js/embed.js"></script>
+<script src="../js/llm.js"></script>
+<script src="../js/rag.js"></script>
 <script src="../js/vectors.js"></script>
 <script src="../js/hybrid.js"></script>
 <script src="eval/dataset.js"></script>
 <script src="eval/run.js"></script>
+<script src="eval/rag.js"></script>
 <script>
   const log = (t) => { document.getElementById('log').textContent += t + '\n'; };
   async function go(fake) {
@@ -35,6 +40,15 @@
     catch (e) { log('失敗: ' + e.message); window.__error = e.message; }
     document.getElementById('go').disabled = document.getElementById('fake').disabled = false;
   }
+  async function goRag(fake) {
+    document.getElementById('log').textContent = '';
+    for (const id of ['go', 'fake', 'rag', 'ragfake']) document.getElementById(id).disabled = true;
+    try { window.__result = await runRagEval(log, { fake }); window.__done = true; }
+    catch (e) { log('失敗: ' + e.message); window.__error = e.message; }
+    for (const id of ['go', 'fake', 'rag', 'ragfake']) document.getElementById(id).disabled = false;
+  }
+  document.getElementById('rag').onclick = () => goRag(false);
+  document.getElementById('ragfake').onclick = () => goRag(true);
   document.getElementById('go').onclick = () => go(false);
   document.getElementById('fake').onclick = () => go(true);
 </script>

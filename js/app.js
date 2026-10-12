@@ -7,7 +7,7 @@
   // 古いファイルが混ざっていないか（キャッシュのずれ）。足りない部品があれば理由を出して止める
   const REQUIRED = ['#app', '#thread', '#messages', '#composer', '#input', '#send', '#drawer',
     '#scrim', '#menu', '#close', '#reset', '#search', '#count', '#terms', '#empty', '#tab-terms', '#tab-passages',
-    '#tab-queue', '#semantic', '#semantic-btn', '#semantic-sync', '#mode', '#storage', '#backup-info', '#export', '#import', '#import-file'];
+    '#tab-queue', '#semantic', '#semantic-btn', '#semantic-sync', '#mode', '#llm', '#llm-btn', '#persona', '#persona-custom', '#tone', '#dl-list', '#storage', '#backup-info', '#export', '#import', '#import-file'];
   const missing = REQUIRED.filter((s) => !$(s));
   if (missing.length) {
     window.__showFatal &&
@@ -40,6 +40,12 @@
     semantic: $('#semantic'),
     semBtn: $('#semantic-btn'),
     semSync: $('#semantic-sync'),
+    llm: $('#llm'),
+    llmBtn: $('#llm-btn'),
+    tone: $('#tone'),
+    persona: $('#persona'),
+    personaCustom: $('#persona-custom'),
+    dlList: $('#dl-list'),
     storage: $('#storage'),
     backupInfo: $('#backup-info'),
     exportBtn: $('#export'),
@@ -188,6 +194,7 @@
       db = opened;
       await AI.net.load(db); // 前回のモードを引き継ぐ
       await loadSemantic(); // 意味検索の設定を引き継ぐ
+      await loadAnswer(); // 回答モデルの設定を引き継ぐ
       await render();
       await renderFoot(true);
     })
@@ -493,30 +500,54 @@
     el.semSync.hidden = st.stale === 0;
   }
 
-  async function enableSemantic() {
+  // 端末にすでにあるものを確かめる（あれば、ダウンロードしない）
+  async function savedState(pack) {
+    const [lib, model] = await Promise.all([AI.store.inspectLibrary(), AI.store.inspectModel(pack.model)]);
+    return { lib, model, complete: lib.cached && model.cached };
+  }
+
+  // 有効にする前の確認。保存済みなら通信なしで進める。足りないぶんだけ、容量と通信先を見せる
+  async function confirmEnable({ name, pack, run, extra }) {
     setDrawer(false);
+    const st = await savedState(pack);
+    if (st.complete) {
+      addMessage('ai', `${name}を有効にします。\nモデル「${pack.label}」は端末に保存済みなので、ダウンロードしません（通信なし）。`, {
+        sub: extra,
+        actions: [
+          { label: '有効にする', main: true, run: () => run(pack) },
+          { label: 'やめる', run: async () => addMessage('ai', '有効にしませんでした。') },
+        ],
+      });
+      return;
+    }
     if (AI.net.isOffline() || navigator.onLine === false) {
       addMessage('ai', 'モデルのダウンロードにはネットが要ります。オンラインにしてから、もう一度どうぞ。');
       return;
     }
-    const pack = packOf(semantic.pack);
     let free = '';
-    try {
-      const e = await navigator.storage.estimate();
-      if (e.quota) free = `\n端末の保存領域の目安：あと ${megabytes(Math.max(0, e.quota - (e.usage || 0)))}`;
-    } catch (_) {
-      /* 取れなくても進める */
-    }
-    addMessage('ai', `意味検索を有効にします。\nモデル「${pack.label}」を、約${pack.approxMB}MBダウンロードします。${free}`, {
-      sub: `通信先：${pack.hosts.join('、')}\n送るのはモデルの取得だけで、記憶や質問は送りません。取得後は端末に保存され、オフラインでも使えます。`,
+    const est = await AI.store.estimate();
+    if (est) free = `\n端末の保存領域の目安：あと ${megabytes(Math.max(0, est.quota - est.usage))}`;
+    const have = [];
+    if (st.lib.cached) have.push('実行用ファイル');
+    if (st.model.files) have.push(`モデルの一部（${AI.store.formatSize(st.model.bytes)}）`);
+    const left = Math.max(1, pack.approxMB - Math.round(st.model.bytes / 1024 / 1024));
+    addMessage('ai', `${name}を有効にします。\nモデル「${pack.label}」を、約${left}MBダウンロードします。${have.length ? `\n保存済みの${have.join('と')}は取り直しません。` : ''}${free}`, {
+      sub: `通信先：${pack.hosts.join('、')}\n送るのはモデルの取得だけで、記憶や質問は送りません。取得後は端末に保存され、オフラインでも使えます。いつでもメニューの「端末に保存したもの」から消せます。`,
       actions: [
-        { label: 'ダウンロードして有効にする', main: true, run: () => runEnable(pack) },
+        { label: 'ダウンロードして有効にする', main: true, run: () => run(pack) },
         { label: 'やめる', run: async () => addMessage('ai', '有効にしませんでした。') },
       ],
     });
   }
 
-  async function runEnable(pack) {
+  const enableSemantic = () => confirmEnable({ name: '意味検索', pack: packOf(semantic.pack), run: runEnable });
+
+  function runEnable(pack) {
+    // 同じモデルの取得を二重に始めない
+    return AI.store.once(`enable:${pack.model}`, () => doEnable(pack));
+  }
+
+  async function doEnable(pack) {
     const pm = progressMessage('準備しています…');
     const candidate = AI.embed.transformersProvider(pack);
     try {
@@ -526,8 +557,10 @@
     } catch (error) {
       pm.remove();
       addMessage('ai', `意味検索を有効にできませんでした。\n${error.message}`);
+      await renderFoot(false);
       return;
     }
+    AI.store.persist(); // ブラウザに「消さないで」と頼む（取り直しを避ける）
     provider = candidate;
     semantic = { enabled: true, pack: pack.id };
     semanticWarned = false;
@@ -542,31 +575,35 @@
     await renderFoot(false);
   }
 
+  // 意味検索をオフにする。wipe なら、ベクトルとモデルも端末から消す（実行用ファイルは「端末に保存したもの」から別に消せる）
+  async function turnOffSemantic(wipe) {
+    const pack = packOf(semantic.pack);
+    semantic = { ...semantic, enabled: false };
+    await putSetting(SEMANTIC_KEY, semantic);
+    if (wipe) {
+      await AI.vectors.removeAll(db);
+      try {
+        await AI.store.removeModel(pack.model);
+      } catch (_) {
+        /* 消せなくても無効にはなっている */
+      }
+    }
+    provider = null;
+    await renderFoot(false);
+    return wipe;
+  }
+
   function disableSemantic() {
     setDrawer(false);
     const off = async (wipe) => {
-      semantic = { ...semantic, enabled: false };
-      await putSetting(SEMANTIC_KEY, semantic);
-      if (wipe) {
-        await AI.vectors.removeAll(db);
-        try {
-          if (window.caches) {
-            await caches.delete('transformers-cache'); // 取得したモデル
-            await caches.delete(AI.embed.LIB_CACHE); // 実行用の本体
-          }
-        } catch (_) {
-          /* 消せなくても無効にはなっている */
-        }
-      }
-      provider = null;
-      addMessage('ai', wipe ? '意味検索をオフにして、ベクトルとモデルを端末から消しました。' : '意味検索をオフにしました。ベクトルとモデルは残してあります。');
-      await renderFoot(false);
+      await turnOffSemantic(wipe);
+      addMessage('ai', wipe ? '意味検索をオフにして、ベクトルとモデルを端末から消しました。' : '意味検索をオフにしました。ベクトルとモデルは残してあります（もう一度有効にするときは、ダウンロードしません）。');
     };
     addMessage('ai', '意味検索をオフにしますか？', {
       sub: '消しても、保存した単語や文章は残ります。',
       actions: [
         { label: 'オフにする（残す）', main: true, run: () => off(false) },
-        { label: 'オフにして全て消す', run: () => off(true) },
+        { label: 'オフにして端末から消す', run: () => off(true) },
         { label: 'やめる', run: async () => {} },
       ],
     });
@@ -593,6 +630,293 @@
   el.semBtn.addEventListener('click', () => (semantic.enabled ? disableSemantic() : enableSemantic()));
   el.semSync.addEventListener('click', runSync);
 
+  // ---- 回答モデル（保存した文章を読んで、文章で答える）----
+  const ANSWER_KEY = 'answer';
+  let answerCfg = { enabled: false, pack: AI.llm.PACKS[0].id, persona: { preset: 'polite', custom: '' } };
+  let generator = null;
+  let generatorPreparing = null;
+  let answerWarned = false;
+  let busy = false; // 回答の生成中は次の生成を始めない（端末が重くなる）
+
+  const llmPackOf = (id) => AI.llm.PACKS.find((p) => p.id === id) || AI.llm.PACKS[0];
+
+  async function loadAnswer() {
+    const row = await getSetting(ANSWER_KEY);
+    if (row && row.value) {
+      answerCfg = { ...answerCfg, ...row.value, persona: { ...answerCfg.persona, ...(row.value.persona || {}) } };
+    }
+    if (answerCfg.enabled) generator = AI.llm.transformersGenerator(llmPackOf(answerCfg.pack));
+  }
+
+  const saveAnswerCfg = () => putSetting(ANSWER_KEY, answerCfg);
+
+  async function ensureGenerator(onProgress) {
+    if (!generator) return false;
+    if (generator.ready) return true;
+    if (!generatorPreparing) generatorPreparing = generator.prepare(onProgress).finally(() => (generatorPreparing = null));
+    await generatorPreparing;
+    return generator.ready;
+  }
+
+  function renderAnswer() {
+    const pack = llmPackOf(answerCfg.pack);
+    if (!answerCfg.enabled) {
+      el.llm.textContent = `回答モデル：オフ\n保存した文章を読んで、文章で答えます（約${pack.approxMB}MB・Wi-Fi推奨）`;
+      el.llmBtn.textContent = '有効にする';
+      el.tone.hidden = true;
+      return;
+    }
+    el.llm.textContent = `回答モデル：オン（${pack.label}）`;
+    el.llmBtn.textContent = 'オフにする';
+    el.tone.hidden = false;
+    el.persona.value = answerCfg.persona.preset;
+    el.personaCustom.hidden = answerCfg.persona.preset !== 'custom';
+    el.personaCustom.value = answerCfg.persona.custom || '';
+  }
+
+  const enableAnswer = () =>
+    confirmEnable({
+      name: '回答モデル',
+      pack: llmPackOf(answerCfg.pack),
+      run: runEnableAnswer,
+      extra: '小さなモデルなので、間違えることがあります。答えには必ず根拠の文章を付けます。端末によっては動かないことがあり、そのときは文章の抜粋を並べます。',
+    });
+
+  function runEnableAnswer(pack) {
+    return AI.store.once(`enable:${pack.model}`, () => doEnableAnswer(pack));
+  }
+
+  async function doEnableAnswer(pack) {
+    const pm = progressMessage('準備しています…');
+    const candidate = AI.llm.transformersGenerator(pack);
+    try {
+      await candidate.prepare(downloadProgress(pm));
+      pm.set('動作を確かめています…');
+      await candidate.generate([{ role: 'user', content: 'こんにちは' }], { maxTokens: 4 }); // 実際に1回動かす
+    } catch (error) {
+      pm.remove();
+      await candidate.unload();
+      addMessage('ai', `回答モデルを有効にできませんでした。\n${error.message}`, {
+        sub: 'メモリが足りない端末では動かないことがあります。保存した文章の検索は、そのまま使えます。',
+      });
+      await renderFoot(false);
+      return;
+    }
+    AI.store.persist();
+    generator = candidate;
+    answerCfg = { ...answerCfg, enabled: true, pack: pack.id };
+    answerWarned = false;
+    await saveAnswerCfg();
+    pm.remove();
+    addMessage('ai', '回答モデルが使えるようになりました。', {
+      sub: '保存した文章に関係する質問をすると、その文章を読んで答えます。メニューで口調も変えられます。',
+    });
+    await renderFoot(false);
+  }
+
+  // 回答モデルをオフにする。wipe ならモデルのファイルも端末から消す
+  async function turnOffAnswer(wipe) {
+    const pack = llmPackOf(answerCfg.pack);
+    const g = generator;
+    generator = null;
+    if (g) await g.unload();
+    answerCfg = { ...answerCfg, enabled: false };
+    await saveAnswerCfg();
+    if (wipe) {
+      try {
+        await AI.store.removeModel(pack.model);
+      } catch (_) {
+        /* 消せなくても無効にはなっている */
+      }
+    }
+    await renderFoot(false);
+  }
+
+  function disableAnswer() {
+    setDrawer(false);
+    const off = async (wipe) => {
+      await turnOffAnswer(wipe);
+      addMessage('ai', wipe ? '回答モデルをオフにして、モデルを端末から消しました。' : '回答モデルをオフにしました。モデルは残してあります（もう一度有効にするときは、ダウンロードしません）。');
+    };
+    addMessage('ai', '回答モデルをオフにしますか？', {
+      sub: '保存した単語や文章は残ります。オフの間は、文章の抜粋を並べて答えます。',
+      actions: [
+        { label: 'オフにする（残す）', main: true, run: () => off(false) },
+        { label: 'オフにして端末から消す', run: () => off(true) },
+        { label: 'やめる', run: async () => {} },
+      ],
+    });
+  }
+
+  el.llmBtn.addEventListener('click', () => (answerCfg.enabled ? disableAnswer() : enableAnswer()));
+
+  // 口調
+  for (const [key, def] of Object.entries(AI.rag.PERSONAS)) {
+    const o = document.createElement('option');
+    o.value = key;
+    o.textContent = def.label;
+    el.persona.appendChild(o);
+  }
+  el.persona.addEventListener('change', async () => {
+    answerCfg.persona = { ...answerCfg.persona, preset: el.persona.value };
+    el.personaCustom.hidden = el.persona.value !== 'custom';
+    await saveAnswerCfg();
+  });
+  el.personaCustom.addEventListener('change', async () => {
+    answerCfg.persona = { ...answerCfg.persona, custom: el.personaCustom.value.trim() };
+    await saveAnswerCfg();
+  });
+
+  // 保存した文章を根拠に答える。表示まで終えたら true。使えなかったら false（呼び出し側が抜粋の一覧に切り替える）
+  async function answerWithModel(query, hits) {
+    if (busy) return false;
+    busy = true;
+    try {
+      let note = null;
+      try {
+        if (!generator.ready) note = progressMessage('回答モデルを読み込んでいます…');
+        await ensureGenerator(note ? downloadProgress(note) : undefined);
+      } catch (error) {
+        if (note) note.remove();
+        if (!answerWarned) {
+          answerWarned = true;
+          addMessage('ai', `${error.message}\n文章の抜粋を並べて答えます。`);
+        }
+        return false;
+      }
+      if (note) note.remove();
+
+      const msg = addMessage('ai', '考えています…', { actions: [{ label: '止める', run: async () => generator.stop() }] });
+      const text = msg.querySelector('.body').childNodes[0];
+      let result;
+      try {
+        result = await AI.rag.answer({
+          query,
+          hits,
+          generator,
+          persona: answerCfg.persona,
+          onToken: (t) => {
+            text.nodeValue = t;
+            scrollDown();
+          },
+        });
+      } catch (error) {
+        msg.remove();
+        addMessage('ai', `回答を作れませんでした。\n${error.message}\n文章の抜粋を並べて答えます。`);
+        return false;
+      }
+      msg.remove();
+
+      const evidenceActions = result.evidence.map((e) => ({ label: `[${e.n}] ${e.passage.title}`, run: async () => showPassage(e.passage) }));
+      if (result.unknown) {
+        await notKnown(query, {
+          lead: `保存した文章には、「${query}」の答えが見つかりませんでした。`,
+          actions: evidenceActions.map((a) => ({ ...a, label: `近い文章 ${a.label}` })),
+        });
+        return true;
+      }
+      const warn = result.grounding < 0.5 ? '⚠ 保存した文章に無い言葉が多く含まれています。根拠を確かめてください。\n' : '';
+      addMessage('ai', result.text, {
+        sub: `${warn}根拠：${result.evidence.map((e) => `[${e.n}] ${e.passage.title}`).join('、')}\n小さなモデルが保存した文章から作った答えです。間違うことがあるので、根拠を押して確かめ、👍/👎を付けてください。`,
+        actions: evidenceActions,
+      });
+      return true;
+    } finally {
+      busy = false;
+    }
+  }
+
+  // ---- 端末に保存したもの（いつでも消せる）----
+  function twoTapDelete(button, run) {
+    let timer = null;
+    const label = button.textContent;
+    button.addEventListener('click', async () => {
+      if (!button.classList.contains('sure')) {
+        button.classList.add('sure');
+        button.textContent = '本当に消す';
+        timer = setTimeout(() => {
+          button.classList.remove('sure');
+          button.textContent = label;
+        }, 4000);
+        return;
+      }
+      clearTimeout(timer);
+      button.disabled = true;
+      try {
+        await run();
+      } catch (error) {
+        addMessage('ai', `消せませんでした。\n${error.message}`);
+      }
+      await renderDownloads();
+    });
+  }
+
+  async function renderDownloads() {
+    if (!db) return;
+    const rows = [];
+    const lib = await AI.store.inspectLibrary();
+    if (lib.cached) {
+      rows.push({
+        title: '実行用ファイル（Transformers.js）',
+        note: '意味検索と回答モデルで共通。消すと、この2つはオフになります',
+        bytes: lib.bytes,
+        remove: async () => {
+          if (semantic.enabled) await turnOffSemantic(false);
+          if (answerCfg.enabled) await turnOffAnswer(false);
+          await AI.store.removeLibrary();
+          addMessage('ai', '実行用ファイルを端末から消しました。意味検索と回答モデルはオフにしました（モデルは残っています）。');
+        },
+      });
+    }
+    for (const pack of AI.embed.PACKS) {
+      const m = await AI.store.inspectModel(pack.model);
+      if (!m.files) continue;
+      rows.push({
+        title: `意味検索のモデル（${pack.label}）`,
+        note: semantic.enabled && semantic.pack === pack.id ? '使用中。消すと意味検索はオフになります' : '',
+        bytes: m.bytes,
+        remove: async () => {
+          if (semantic.enabled && semantic.pack === pack.id) await turnOffSemantic(false);
+          await AI.store.removeModel(pack.model);
+          addMessage('ai', '意味検索のモデルを端末から消しました。');
+        },
+      });
+    }
+    for (const pack of AI.llm.PACKS) {
+      const m = await AI.store.inspectModel(pack.model);
+      if (!m.files) continue;
+      rows.push({
+        title: `回答モデル（${pack.label}）`,
+        note: answerCfg.enabled && answerCfg.pack === pack.id ? '使用中。消すと回答モデルはオフになります' : '',
+        bytes: m.bytes,
+        remove: async () => {
+          if (answerCfg.enabled && answerCfg.pack === pack.id) await turnOffAnswer(false);
+          await AI.store.removeModel(pack.model);
+          addMessage('ai', '回答モデルを端末から消しました。');
+        },
+      });
+    }
+    el.dlList.replaceChildren();
+    if (!rows.length) {
+      const p = document.createElement('p');
+      p.textContent = '保存したものはありません。';
+      el.dlList.appendChild(p);
+      return;
+    }
+    for (const r of rows) {
+      const row = document.createElement('div');
+      row.className = 'dl';
+      const label = document.createElement('span');
+      label.textContent = `${r.title}\n${AI.store.formatSize(r.bytes)}${r.note ? `　${r.note}` : ''}`;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = '消す';
+      twoTapDelete(button, r.remove);
+      row.append(label, button);
+      el.dlList.appendChild(row);
+    }
+  }
+
   // ---- 聞く ----
   function showPassage(p) {
     addMessage('ai', p.body, { rate: { type: 'passage', id: p.id }, title: p.title, sub: `保存 ${formatDate(p.fetchedAt)}${p.sourceUrl ? `\n${p.sourceUrl}` : ''}${p.license ? `（${p.license}）` : ''}` });
@@ -611,6 +935,7 @@
       return;
     }
     if (hits.length) {
+      if (answerCfg.enabled && generator && (await answerWithModel(query, hits))) return;
       addMessage('ai', hits.map((h, i) => `${i + 1}. ${h.passage.title}${h.via && !h.via.includes('keyword') ? '〔意味が近い〕' : ''}\n   ${h.snippet}`).join('\n'), {
         title: `保存した文章に ${hits.length} 件あります`,
         sub: '押すと全文を表示します。',
@@ -619,23 +944,31 @@
       return;
     }
 
+    await notKnown(query, {});
+  }
+
+  // 答えられなかった質問の後始末：未回答に残し、近い言葉とWikipediaを案内する
+  async function notKnown(query, { lead, actions: extra }) {
     const key = AI.normalizeTerm(query);
     const near = key
       ? (await AI.terms.list(db)).filter((r) => r.key.includes(key) || key.includes(r.key)).slice(0, 5)
       : [];
-    const actions = near.map((r) => ({
-      label: r.term,
-      run: async () => {
-        addMessage('user', r.term);
-        await ask(r.term);
-      },
-    }));
+    const actions = (extra || []).concat(
+      near.map((r) => ({
+        label: r.term,
+        run: async () => {
+          addMessage('user', r.term);
+          await ask(r.term);
+        },
+      }))
+    );
+    const head = lead || `「${query}」はまだ知りません。`;
     // 答えられなかった質問は、未回答に残す（あとでオンラインのときにまとめて調べられる）
     await AI.queue.add(db, query);
     await render();
 
     if (AI.net.isOffline()) {
-      addMessage('ai', `「${query}」はまだ知りません。${near.length ? '近い言葉があります。' : ''}\n「${query} = 意味」と教えてください。`, {
+      addMessage('ai', `${head}${near.length ? '近い言葉があります。' : ''}\n「${query} = 意味」と教えてください。`, {
         sub: 'オフラインモード中なので、外部には調べに行きません。未回答に残したので、オンラインに戻ったらまとめて調べられます。',
         actions,
       });
@@ -643,7 +976,7 @@
     }
     actions.push({ label: 'Wikipediaで調べる', main: true, run: () => searchWikipedia(query) });
 
-    addMessage('ai', `「${query}」はまだ知りません。${near.length ? '近い言葉があります。' : ''}\n「${query} = 意味」と教えるか、Wikipediaで調べられます。`, {
+    addMessage('ai', `${head}${near.length ? '近い言葉があります。' : ''}\n「${query} = 意味」と教えるか、Wikipediaで調べられます。`, {
       sub: `Wikipediaで調べると、「${query}」がWikipediaに送られます。調べずに閉じても、未回答に残ります。`,
       actions,
     });
@@ -890,6 +1223,8 @@
       parts.push('保存領域の状態は取得できませんでした');
     }
     await renderSemantic();
+    renderAnswer();
+    await renderDownloads();
     const note = installed() ? '' : '\nホーム画面に追加すると、消えにくくなります。';
     el.storage.textContent = parts.join(' ／ ') + note;
 

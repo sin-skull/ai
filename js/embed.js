@@ -37,7 +37,7 @@
     url: 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.1/dist/transformers.min.js',
     sha256: '8d6716d9086f57c30a4bf367dba61b887593573c770c454465e8019b2703e743',
   };
-  const LIB_CACHE = 'ai-lib-1';
+  const LIB_CACHE = 'ai-lib-1'; // AI.store.LIB_CACHE と同じ名前
   let libPromise = null;
 
   async function sha256Hex(buffer) {
@@ -87,6 +87,31 @@
     return out;
   }
 
+  // モデルを読み込んでパイプラインを作る（意味検索と回答で共通）。
+  // すでに端末にあるファイルは取り直さない（Transformers.js が保存先を先に見る）。featureName はエラー文用
+  async function createPipeline(task, pack, onProgress, featureName) {
+    const lib = await loadLibrary();
+    // オフラインモード中は、外には取りに行かない（端末に保存済みのモデルだけを使う）
+    lib.env.allowLocalModels = false;
+    lib.env.allowRemoteModels = !AI.net.isOffline();
+    const progress = (info) => {
+      if (!onProgress || !info) return;
+      if (info.status === 'progress' && info.total) {
+        onProgress({ label: info.file || 'model', loaded: info.loaded || 0, total: info.total });
+      } else if (info.status === 'ready') {
+        onProgress({ label: 'ready', loaded: 1, total: 1 });
+      }
+    };
+    try {
+      return await lib.pipeline(task, pack.model, { dtype: pack.dtype, device: 'wasm', progress_callback: progress });
+    } catch (error) {
+      if (AI.net.isOffline()) {
+        throw new Error(`モデルがこの端末にありません。オンラインモードで「${featureName}を有効にする」を行ってください。`);
+      }
+      throw new Error(`モデルを読み込めませんでした。${error && error.message ? error.message : error}`);
+    }
+  }
+
   // Transformers.js を使う実プロバイダ
   function transformersProvider(pack) {
     let extractor = null;
@@ -100,31 +125,7 @@
       },
       async prepare(onProgress) {
         if (extractor) return;
-        const lib = await loadLibrary();
-        // オフラインモード中は、外には取りに行かない（端末に保存済みのモデルだけを使う）
-        lib.env.allowLocalModels = false;
-        lib.env.allowRemoteModels = !AI.net.isOffline();
-        const progress = (info) => {
-          if (!onProgress || !info) return;
-          if (info.status === 'progress' && info.total) {
-            onProgress({ label: info.file || 'model', loaded: info.loaded || 0, total: info.total });
-          } else if (info.status === 'ready') {
-            onProgress({ label: 'ready', loaded: 1, total: 1 });
-          }
-        };
-        try {
-          extractor = await lib.pipeline('feature-extraction', pack.model, {
-            dtype: pack.dtype,
-            device: 'wasm',
-            progress_callback: progress,
-          });
-        } catch (error) {
-          extractor = null;
-          if (AI.net.isOffline()) {
-            throw new Error('モデルがこの端末にありません。オンラインモードで「意味検索を有効にする」を行ってください。');
-          }
-          throw new Error(`モデルを読み込めませんでした。${error && error.message ? error.message : error}`);
-        }
+        extractor = await createPipeline('feature-extraction', pack, onProgress, '意味検索');
       },
       async embed(texts, kind) {
         if (!extractor) throw new Error('モデルの準備ができていません');
@@ -144,5 +145,5 @@
   }
 
   // reset はテスト用（読み込み済みの状態を捨てる）
-  AI.embed = { PACKS, LIB, LIB_CACHE, normalize, loadLibrary, transformersProvider, reset: () => (libPromise = null) };
+  AI.embed = { PACKS, LIB, LIB_CACHE, normalize, loadLibrary, createPipeline, transformersProvider, reset: () => (libPromise = null) };
 })(typeof globalThis !== 'undefined' ? globalThis : window);
