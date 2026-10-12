@@ -33,7 +33,15 @@
 
 ## 状態
 
-フェーズ0（準備）。コードはまだ無い。進め方は [docs/ROADMAP.md](docs/ROADMAP.md) を参照。
+フェーズ1-A（単語辞書）まで完了。進め方は [docs/ROADMAP.md](docs/ROADMAP.md) を参照。
+
+## 動かし方
+
+`index.html` をブラウザで開くだけで動く（サーバー不要）。データはそのブラウザの IndexedDB に保存される。
+
+## テスト
+
+`tests/test.html` をブラウザで開くと、回帰テストが走る。
 
 ## 補足
 

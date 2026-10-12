@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ai テスト</title>
+<style>
+  body { font: 15px/1.7 system-ui, sans-serif; margin: 24px; max-width: 42em; }
+  h1 { font-size: 1.1rem; }
+  #summary { font-weight: 600; margin: 8px 0 16px; }
+  ul { list-style: none; padding: 0; }
+  li.ok { color: #2f6b3a; }
+  li.ng { color: #b3261e; }
+  pre { margin: 4px 0 8px 1.2em; white-space: pre-wrap; font-size: 13px; }
+</style>
+</head>
+<body>
+<h1>ai 回帰テスト</h1>
+<div id="summary">実行中…</div>
+<ul id="results"></ul>
+<script src="../js/normalize.js"></script>
+<script src="../js/db.js"></script>
+<script src="../js/terms.js"></script>
+<script src="runner.js"></script>
+<script src="terms.test.js"></script>
+<script>T.run();</script>
+</body>
+</html>

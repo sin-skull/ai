@@ -5,21 +5,158 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ai</title>
 <style>
-  :root { --bg: #f4f0e8; --ink: #2b2723; --sub: #7a7268; }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg: #1f1d1a; --ink: #ece6da; --sub: #9a9084; }
+  :root {
+    --paper: #f3eee3;
+    --paper-2: #ebe4d4;
+    --ink: #2a2622;
+    --sub: #766d61;
+    --line: #cfc5b0;
+    --mark: #b5452c;
+    --ok: #4f6b45;
   }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); }
-  body { display: grid; place-items: center; font: 16px/1.8 "Hiragino Mincho ProN", "Yu Mincho", serif; }
-  main { padding: 24px; max-width: 28em; }
-  h1 { font-size: 1.6rem; font-weight: 500; letter-spacing: .12em; margin: 0 0 .4em; }
-  p { margin: 0; color: var(--sub); }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #1f1d1a;
+      --paper-2: #28251f;
+      --ink: #ece6da;
+      --sub: #9a9084;
+      --line: #4a4338;
+      --mark: #e0775c;
+      --ok: #98b88c;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--paper); }
+  body {
+    margin: 0;
+    color: var(--ink);
+    font: 16px/1.8 "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
+  }
+  main { max-width: 36rem; margin: 0 auto; padding: 28px 16px 64px; }
+
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 20px; }
+  h1 { font-size: 1.7rem; font-weight: 500; letter-spacing: .14em; margin: 0; }
+  header small { color: var(--sub); }
+
+  h2 { font-size: 1rem; font-weight: 600; letter-spacing: .08em; margin: 0 0 10px; }
+
+  /* 少し不揃いな縁取り。手で囲んだ感じを出す */
+  .card {
+    background: var(--paper-2);
+    border: 1.5px solid var(--line);
+    border-radius: 14px 9px 16px 8px / 9px 15px 8px 13px;
+    padding: 16px;
+    margin-bottom: 20px;
+  }
+
+  label { display: block; font-size: .85rem; color: var(--sub); margin: 10px 0 2px; }
+  input, textarea {
+    width: 100%;
+    font: inherit;
+    color: var(--ink);
+    background: var(--paper);
+    border: 1.5px solid var(--line);
+    border-radius: 8px 12px 7px 11px / 11px 7px 12px 8px;
+    padding: 8px 10px;
+  }
+  textarea { min-height: 5.2em; resize: vertical; }
+  input:focus, textarea:focus, button:focus-visible {
+    outline: 2px solid var(--mark);
+    outline-offset: 2px;
+  }
+
+  button {
+    font: inherit;
+    color: var(--ink);
+    background: var(--paper);
+    border: 1.5px solid var(--ink);
+    border-radius: 9px 6px 10px 7px / 7px 10px 6px 9px;
+    padding: 6px 16px;
+    cursor: pointer;
+  }
+  button:hover { background: var(--paper-2); }
+  button.primary { background: var(--ink); color: var(--paper); }
+  button.quiet { border-color: var(--line); color: var(--sub); padding: 2px 10px; font-size: .85rem; }
+  button.quiet:hover { color: var(--mark); border-color: var(--mark); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
+
+  #status { min-height: 1.8em; margin: 8px 0 0; font-size: .9rem; color: var(--ok); }
+  #status.warn { color: var(--mark); }
+
+  /* 同じ語が既にあるときの確認 */
+  #conflict { display: none; border-color: var(--mark); }
+  #conflict.show { display: block; }
+  #conflict .pair { display: grid; gap: 8px; margin: 8px 0 4px; }
+  #conflict .pair div { background: var(--paper); border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; }
+  #conflict .pair b { display: block; font-size: .8rem; font-weight: 400; color: var(--sub); }
+
+  .listhead { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+  #count { color: var(--sub); font-size: .9rem; }
+  #search { margin-bottom: 12px; }
+
+  ul#terms { list-style: none; margin: 0; padding: 0; }
+  ul#terms li {
+    border-bottom: 1px dashed var(--line);
+    padding: 10px 2px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2px 12px;
+  }
+  ul#terms .term { font-weight: 600; letter-spacing: .04em; }
+  ul#terms .def { grid-column: 1; white-space: pre-wrap; margin: 0; }
+  ul#terms .meta { grid-column: 1; font-size: .8rem; color: var(--sub); }
+  ul#terms button { grid-column: 2; grid-row: 1; align-self: start; }
+  #empty { color: var(--sub); text-align: center; padding: 24px 0; }
 </style>
 </head>
 <body>
 <main>
-  <h1>ai</h1>
-  <p>準備中です。進め方は docs/ROADMAP.md を見てください。</p>
+  <header>
+    <h1>ai</h1>
+    <small>単語辞書</small>
+  </header>
+
+  <section class="card">
+    <h2>単語を覚えさせる</h2>
+    <form id="form" autocomplete="off">
+      <label for="term">単語</label>
+      <input id="term" required>
+      <label for="def">定義</label>
+      <textarea id="def"></textarea>
+      <div class="row">
+        <button class="primary" type="submit">保存する</button>
+      </div>
+    </form>
+    <p id="status" role="status" aria-live="polite"></p>
+  </section>
+
+  <section class="card" id="conflict" aria-live="polite">
+    <h2>同じ語がすでにあります</h2>
+    <div class="pair">
+      <div><b>いまの定義</b><span id="c-old"></span></div>
+      <div><b>新しい定義</b><span id="c-new"></span></div>
+    </div>
+    <div class="row">
+      <button id="c-overwrite" type="button">上書きする</button>
+      <button id="c-append" type="button">追記する</button>
+      <button id="c-ignore" type="button">今のまま残す</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="listhead">
+      <h2>覚えている単語</h2>
+      <span id="count"></span>
+    </div>
+    <input id="search" type="search" placeholder="絞り込み" aria-label="単語を絞り込む">
+    <ul id="terms"></ul>
+    <p id="empty" hidden>まだ何も覚えていません。</p>
+  </section>
 </main>
+
+<script src="js/normalize.js"></script>
+<script src="js/db.js"></script>
+<script src="js/terms.js"></script>
+<script src="js/app.js"></script>
 </body>
 </html>
