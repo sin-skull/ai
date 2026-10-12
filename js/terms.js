@@ -5,7 +5,7 @@
 //   term       最初に保存したときの表記（表示用）
 //   variants   これまでに見た表記ゆれの一覧
 //   definition 定義
-//   sources    出典の一覧 [{ url, title, at }]
+//   sources    出典の一覧 [{ url, title, license, at }]
 //   createdAt / updatedAt  ミリ秒
 //   useCount / score       フェーズ5・6で使う（今は初期値）
 (function (root) {
@@ -23,7 +23,7 @@
   function addSource(record, source, at) {
     if (!source || (!source.url && !source.title)) return false;
     if (source.url && record.sources.some((s) => s.url === source.url)) return false;
-    record.sources.push({ url: source.url || '', title: source.title || '', at });
+    record.sources.push({ url: source.url || '', title: source.title || '', license: source.license || '', at });
     return true;
   }
 

@@ -1,7 +1,7 @@
 // Service Worker：アプリ本体をキャッシュして、電波が無くても開けるようにする。
 // VERSION は index.html のスクリプトの ?v= と同じにする（tests で食い違いを検出）。
 // 外部（Wikipedia など）の通信はここでは扱わない。同じオリジンのファイルだけを対象にする。
-const VERSION = '0.6.0';
+const VERSION = '0.7.0';
 const CACHE = `ai-${VERSION}`;
 const FILES = [
   './index.html',
@@ -9,7 +9,7 @@ const FILES = [
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png',
-  ...['normalize', 'db', 'terms', 'chat', 'wiki', 'passages', 'feedback', 'net', 'backup', 'app'].map(
+  ...['normalize', 'db', 'terms', 'chat', 'wiki', 'passages', 'feedback', 'net', 'queue', 'backup', 'app'].map(
     (n) => `./js/${n}.js?v=${VERSION}`
   ),
 ];

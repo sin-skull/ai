@@ -5,6 +5,7 @@
 //   title      見出し（空なら本文の先頭から作る）
 //   body       本文
 //   sourceUrl  出典URL（無ければ空）
+//   license    ライセンス表記（例: 'CC BY-SA 4.0'。無ければ空）
 //   terms      関連する単語（表示用の表記）
 //   fetchedAt  保存した時刻（ミリ秒）
 //   useCount / score  フェーズ5・6で使う（今は初期値）
@@ -65,6 +66,7 @@
       title: makeTitle(options.title, text),
       body: text,
       sourceUrl: options.sourceUrl || '',
+      license: options.license || '',
       terms: Array.isArray(options.terms) ? options.terms.map(String) : [],
       fetchedAt: now,
       useCount: 0,

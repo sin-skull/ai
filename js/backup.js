@@ -16,10 +16,11 @@
 
   async function exportAll(db, options = {}) {
     const now = options.now ?? Date.now();
-    const data = await tx(db, ['terms', 'passages', 'feedback'], 'readonly', async (t) => ({
+    const data = await tx(db, ['terms', 'passages', 'feedback', 'queue'], 'readonly', async (t) => ({
       terms: await rq(t.objectStore('terms').getAll()),
       passages: await rq(t.objectStore('passages').getAll()),
       feedback: await rq(t.objectStore('feedback').getAll()),
+      queue: await rq(t.objectStore('queue').getAll()),
     }));
     return { format: FORMAT, formatVersion: FORMAT_VERSION, schemaVersion: AI.db.SCHEMA_VERSION, exportedAt: now, ...data };
   }
@@ -40,11 +41,12 @@
     for (const k of ['terms', 'passages', 'feedback']) {
       if (!Array.isArray(data[k])) throw new Error(`ファイルが壊れています（${k}）。`);
     }
+    if (data.queue !== undefined && !Array.isArray(data.queue)) throw new Error('ファイルが壊れています（queue）。');
     for (const t of data.terms) if (!t || typeof t.key !== 'string' || !t.key) throw new Error('ファイルが壊れています（単語）。');
     for (const p of data.passages) {
       if (!p || typeof p.body !== 'string' || !Number.isInteger(p.id)) throw new Error('ファイルが壊れています（文章）。');
     }
-    return { terms: data.terms.length, passages: data.passages.length, feedback: data.feedback.length };
+    return { terms: data.terms.length, passages: data.passages.length, feedback: data.feedback.length, queue: (data.queue || []).length };
   }
 
   const indexText = (p) => `${p.title}\n${p.body}`;
@@ -84,13 +86,14 @@
     const mode = options.mode || 'merge';
     if (mode !== 'merge' && mode !== 'overwrite') throw new Error(`未知の読み込み方式: ${mode}`);
 
-    return tx(db, ['terms', 'passages', 'ngram', 'vectors', 'feedback'], 'readwrite', async (t) => {
+    const queueRows = data.queue || [];
+    return tx(db, ['terms', 'passages', 'ngram', 'vectors', 'feedback', 'queue'], 'readwrite', async (t) => {
       const terms = t.objectStore('terms');
       const passages = t.objectStore('passages');
-      const result = { terms: { added: 0, merged: 0 }, passages: { added: 0, skipped: 0 }, feedback: 0 };
+      const result = { terms: { added: 0, merged: 0 }, passages: { added: 0, skipped: 0 }, feedback: 0, queue: 0 };
 
       if (mode === 'overwrite') {
-        for (const name of ['terms', 'passages', 'ngram', 'vectors', 'feedback']) await rq(t.objectStore(name).clear());
+        for (const name of ['terms', 'passages', 'ngram', 'vectors', 'feedback', 'queue']) await rq(t.objectStore(name).clear());
         for (const term of data.terms) {
           await rq(terms.put(term));
           result.terms.added++;
@@ -104,6 +107,10 @@
           const { id, ...row } = f;
           await rq(t.objectStore('feedback').add(row));
           result.feedback++;
+        }
+        for (const q of queueRows) {
+          await rq(t.objectStore('queue').put(q));
+          result.queue++;
         }
         return result;
       }
@@ -152,6 +159,18 @@
         have.add(sig);
         await rq(log.add({ targetType: f.targetType, targetId, value: f.value, at: f.at }));
         result.feedback++;
+      }
+
+      // 未回答キュー：調べ待ちで、今の調べ待ちに無い語だけ足す
+      const queue = t.objectStore('queue');
+      const pending = await rq(queue.index('status').getAll('pending'));
+      const keys = new Set(pending.map((q) => q.key));
+      for (const q of queueRows) {
+        if (q.status !== 'pending' || keys.has(q.key)) continue;
+        keys.add(q.key);
+        const { id, ...row } = q;
+        await rq(queue.add(row));
+        result.queue++;
       }
       return result;
     });

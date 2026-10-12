@@ -181,6 +181,7 @@
   }
   #terms .del:hover { color: var(--danger); border-color: var(--line); }
   #terms .del.armed { color: var(--danger); border-color: var(--danger); }
+  #terms .bulk { grid-column: 1 / -1; width: 100%; min-height: 44px; background: var(--ink); color: var(--bg); border: 0; border-radius: 12px; font-size: .95rem; }
   #empty { padding: 24px 16px; color: var(--sub); text-align: center; }
 
   /* 何か壊れたときに、画面に理由を出す（スマホでは開発者ツールが使えないため） */
@@ -237,6 +238,7 @@
     <div id="tabs" role="tablist">
       <button type="button" role="tab" id="tab-terms" aria-selected="true">単語</button>
       <button type="button" role="tab" id="tab-passages" aria-selected="false">文章</button>
+      <button type="button" role="tab" id="tab-queue" aria-selected="false">未回答</button>
     </div>
     <div class="dtools"><input id="search" type="search" placeholder="記憶を探す" aria-label="記憶を探す"></div>
     <div id="count"></div>
@@ -291,15 +293,16 @@
   </div>
 </div>
 
-<script src="js/normalize.js?v=0.6.0"></script>
-<script src="js/db.js?v=0.6.0"></script>
-<script src="js/terms.js?v=0.6.0"></script>
-<script src="js/chat.js?v=0.6.0"></script>
-<script src="js/wiki.js?v=0.6.0"></script>
-<script src="js/passages.js?v=0.6.0"></script>
-<script src="js/feedback.js?v=0.6.0"></script>
-<script src="js/net.js?v=0.6.0"></script>
-<script src="js/backup.js?v=0.6.0"></script>
-<script src="js/app.js?v=0.6.0"></script>
+<script src="js/normalize.js?v=0.7.0"></script>
+<script src="js/db.js?v=0.7.0"></script>
+<script src="js/terms.js?v=0.7.0"></script>
+<script src="js/chat.js?v=0.7.0"></script>
+<script src="js/wiki.js?v=0.7.0"></script>
+<script src="js/passages.js?v=0.7.0"></script>
+<script src="js/feedback.js?v=0.7.0"></script>
+<script src="js/net.js?v=0.7.0"></script>
+<script src="js/queue.js?v=0.7.0"></script>
+<script src="js/backup.js?v=0.7.0"></script>
+<script src="js/app.js?v=0.7.0"></script>
 </body>
 </html>

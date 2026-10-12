@@ -7,13 +7,15 @@
   // 古いファイルが混ざっていないか（キャッシュのずれ）。足りない部品があれば理由を出して止める
   const REQUIRED = ['#app', '#thread', '#messages', '#composer', '#input', '#send', '#drawer',
     '#scrim', '#menu', '#close', '#reset', '#search', '#count', '#terms', '#empty', '#tab-terms', '#tab-passages',
-    '#mode', '#storage', '#backup-info', '#export', '#import', '#import-file'];
+    '#tab-queue', '#mode', '#storage', '#backup-info', '#export', '#import', '#import-file'];
   const missing = REQUIRED.filter((s) => !$(s));
   if (missing.length) {
     window.__showFatal &&
       window.__showFatal('ページの一部が古いままのようです。再読み込みしてください。', `見つからない部品: ${missing.join(' ')}`);
     return;
   }
+
+  const WIKI_LICENSE = 'CC BY-SA 4.0'; // Wikipedia の本文のライセンス。保存するときに出典と一緒に残す
 
   const el = {
     thread: $('#thread'),
@@ -33,6 +35,7 @@
     empty: $('#empty'),
     tabTerms: $('#tab-terms'),
     tabPassages: $('#tab-passages'),
+    tabQueue: $('#tab-queue'),
     mode: $('#mode'),
     storage: $('#storage'),
     backupInfo: $('#backup-info'),
@@ -91,7 +94,7 @@
   // ---- 会話 ----
   // role: 'user' | 'ai'。opts: { title, sub, actions: [{ label, main, run }] }
   function addMessage(role, text, opts = {}) {
-    if (el.hello) {
+    if (el.hello && !opts.keepHello) {
       el.hello.remove();
       el.hello = null;
     }
@@ -221,6 +224,7 @@
     }
 
     const term = result.record.term;
+    if (policy !== 'ignore') await AI.queue.resolve(db, learn.term); // 覚えたので、未回答からは外す
     if (policy === 'ignore') addMessage('ai', `「${term}」は今のまま残しました。`);
     else if (result.status === 'created') addMessage('ai', `「${term}」を覚えました。`);
     else if (result.status === 'updated') addMessage('ai', `「${term}」を更新しました。`);
@@ -231,6 +235,7 @@
   // 文章として保存する（確認のあとに呼ぶ）
   async function savePassage(text, extra = {}) {
     const p = await AI.passages.add(db, text, extra);
+    for (const term of extra.terms || []) await AI.queue.resolve(db, term);
     addMessage('ai', `文章として保存しました。\n「${p.title}」`, {
       sub: '「文章」タブで見たり消したりできます。聞くと、この中からも探します。',
     });
@@ -238,27 +243,59 @@
   }
 
   // ---- Wikipedia（ここだけが外部に通信する。ボタンを押したときだけ）----
-  function showCandidate(query, list, index) {
+  // ctx: まとめて調べるときだけ { item, done }。決めたら done() で次の語へ進む
+  function showCandidate(query, list, index, ctx) {
     const c = list[index];
-    const learn = { term: query, definition: c.extract, source: { url: c.url, title: `Wikipedia「${c.title}」` } };
+    const learn = {
+      term: query,
+      definition: c.extract,
+      source: { url: c.url, title: `Wikipedia「${c.title}」`, license: WIKI_LICENSE },
+    };
+    const finish = () => ctx && ctx.done();
     const actions = [
       {
         label: '単語と文章で覚える',
         main: true,
         run: async () => {
           await save(learn, 'ask');
-          await savePassage(c.extract, { title: c.title, sourceUrl: c.url, terms: [query] });
+          await savePassage(c.extract, { title: c.title, sourceUrl: c.url, license: WIKI_LICENSE, terms: [query] });
+          finish();
         },
       },
-      { label: '単語だけ覚える', run: () => save(learn, 'ask') },
+      {
+        label: '単語だけ覚える',
+        run: async () => {
+          await save(learn, 'ask');
+          finish();
+        },
+      },
     ];
     if (index + 1 < list.length) {
-      actions.push({ label: '次の候補', run: async () => showCandidate(query, list, index + 1) });
+      actions.push({ label: '次の候補', run: async () => showCandidate(query, list, index + 1, ctx) });
     }
-    actions.push({ label: 'やめる', run: async () => addMessage('ai', '覚えませんでした。') });
+    if (ctx) {
+      actions.push({
+        label: 'あとで',
+        run: async () => {
+          addMessage('ai', `「${query}」は調べ待ちのままにします。`);
+          finish();
+        },
+      });
+      actions.push({
+        label: 'いらない',
+        run: async () => {
+          await AI.queue.setStatus(db, ctx.item.id, 'dismissed');
+          addMessage('ai', `「${query}」は未回答から外しました。`);
+          await render();
+          finish();
+        },
+      });
+    } else {
+      actions.push({ label: 'やめる', run: async () => addMessage('ai', '覚えませんでした。') });
+    }
     addMessage('ai', c.extract, {
       title: c.title,
-      sub: `Wikipedia（候補 ${index + 1}/${list.length}）\n${c.url}`,
+      sub: `Wikipedia（候補 ${index + 1}/${list.length}）\n${c.url}\n${WIKI_LICENSE}・保存すると出典と一緒に残します`,
       actions,
     });
   }
@@ -287,9 +324,68 @@
     showCandidate(query, list, 0);
   }
 
+  // ---- 未回答をまとめて調べる ----
+  async function researchQueue() {
+    if (AI.net.isOffline() || navigator.onLine === false) {
+      addMessage('ai', 'いまはオフラインなので調べられません。オンラインに戻してから、もう一度どうぞ。');
+      return;
+    }
+    const items = await AI.queue.list(db);
+    if (!items.length) {
+      addMessage('ai', '未回答の質問はありません。');
+      return;
+    }
+    addMessage('ai', `次の ${items.length} 件の語をWikipediaに送って調べます。\n${items.map((i) => `・${i.query}`).join('\n')}`, {
+      sub: '調べた結果は自動では保存しません。候補を見て、残すものを選べます。',
+      actions: [
+        { label: '送って調べる', main: true, run: () => runResearch(items) },
+        { label: 'やめる', run: async () => addMessage('ai', '調べませんでした。') },
+      ],
+    });
+  }
+
+  async function runResearch(items) {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      addMessage('ai', `(${i + 1}/${items.length}) 「${item.query}」を調べています…`);
+      let list;
+      try {
+        list = await AI.wiki.search(item.query);
+      } catch (error) {
+        addMessage('ai', `Wikipediaに繋がりませんでした。\n${error.message}\n残りは調べ待ちのままです。`);
+        return;
+      }
+      if (!list.length) {
+        addMessage('ai', `「${item.query}」は見つかりませんでした。調べ待ちのままにします。`);
+        continue;
+      }
+      await new Promise((resolve) => showCandidate(item.query, list, 0, { item, done: resolve }));
+    }
+    addMessage('ai', 'まとめて調べ終わりました。');
+    await render();
+  }
+
+  // オンラインのとき、溜まっている未回答を知らせる
+  async function notifyPending() {
+    if (!db || AI.net.isOffline() || navigator.onLine === false) return;
+    const n = await AI.queue.count(db);
+    if (!n) return;
+    addMessage('ai', `答えられなかった質問が ${n} 件あります。`, {
+      keepHello: true, // 最初の画面の案内は消さない
+      actions: [
+        { label: 'まとめて調べる', main: true, run: researchQueue },
+        { label: 'あとで', run: async () => {} },
+      ],
+    });
+  }
+  AI.net.onChange((off) => {
+    if (!off) notifyPending().catch(() => {});
+  });
+  window.addEventListener('online', () => notifyPending().catch(() => {}));
+
   // ---- 聞く ----
   function showPassage(p) {
-    addMessage('ai', p.body, { rate: { type: 'passage', id: p.id }, title: p.title, sub: `保存 ${formatDate(p.fetchedAt)}${p.sourceUrl ? `\n${p.sourceUrl}` : ''}` });
+    addMessage('ai', p.body, { rate: { type: 'passage', id: p.id }, title: p.title, sub: `保存 ${formatDate(p.fetchedAt)}${p.sourceUrl ? `\n${p.sourceUrl}` : ''}${p.license ? `（${p.license}）` : ''}` });
   }
 
   async function ask(query) {
@@ -324,9 +420,13 @@
         await ask(r.term);
       },
     }));
+    // 答えられなかった質問は、未回答に残す（あとでオンラインのときにまとめて調べられる）
+    await AI.queue.add(db, query);
+    await render();
+
     if (AI.net.isOffline()) {
       addMessage('ai', `「${query}」はまだ知りません。${near.length ? '近い言葉があります。' : ''}\n「${query} = 意味」と教えてください。`, {
-        sub: 'オフラインモード中なので、外部には調べに行きません。',
+        sub: 'オフラインモード中なので、外部には調べに行きません。未回答に残したので、オンラインに戻ったらまとめて調べられます。',
         actions,
       });
       return;
@@ -334,7 +434,7 @@
     actions.push({ label: 'Wikipediaで調べる', main: true, run: () => searchWikipedia(query) });
 
     addMessage('ai', `「${query}」はまだ知りません。${near.length ? '近い言葉があります。' : ''}\n「${query} = 意味」と教えるか、Wikipediaで調べられます。`, {
-      sub: `Wikipediaで調べると、「${query}」がWikipediaに送られます。`,
+      sub: `Wikipediaで調べると、「${query}」がWikipediaに送られます。調べずに閉じても、未回答に残ります。`,
       actions,
     });
   }
@@ -500,7 +600,7 @@
 
       const meta = document.createElement('span');
       meta.className = 'meta';
-      meta.textContent = `保存 ${formatDate(p.fetchedAt)} ・ ${p.body.length}文字${p.sourceUrl ? ` ・ ${p.sourceUrl}` : ''}`;
+      meta.textContent = `保存 ${formatDate(p.fetchedAt)} ・ ${p.body.length}文字${p.sourceUrl ? ` ・ ${p.sourceUrl}` : ''}${p.license ? ` ・ ${p.license}` : ''}`;
 
       const del = document.createElement('button');
       del.type = 'button';
@@ -680,21 +780,89 @@
     });
   }
 
+  // ---- 未回答の一覧（「未回答」タブ）----
+  async function renderQueue() {
+    const items = await AI.queue.list(db);
+    el.list.textContent = '';
+    if (items.length && !AI.net.isOffline()) {
+      const li = document.createElement('li');
+      const go = document.createElement('button');
+      go.type = 'button';
+      go.className = 'bulk';
+      go.textContent = `まとめて調べる（${items.length}件）`;
+      go.addEventListener('click', () => {
+        setDrawer(false);
+        researchQueue();
+      });
+      li.appendChild(go);
+      el.list.appendChild(li);
+    }
+    for (const r of items) {
+      const li = document.createElement('li');
+      const term = document.createElement('span');
+      term.className = 'term';
+      term.textContent = r.query;
+      const def = document.createElement('p');
+      def.className = 'def';
+      def.textContent = r.askedCount > 1 ? `${r.askedCount}回聞かれました` : '答えられませんでした';
+      const meta = document.createElement('span');
+      meta.className = 'meta';
+      meta.textContent = `最初に聞いた日 ${formatDate(r.createdAt)}`;
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'del';
+      del.textContent = '外す';
+      del.setAttribute('aria-label', `${r.query} を未回答から外す`);
+      let timer = null;
+      del.addEventListener('click', async () => {
+        if (!del.classList.contains('armed')) {
+          del.classList.add('armed');
+          del.textContent = 'もう一度';
+          timer = setTimeout(() => {
+            del.classList.remove('armed');
+            del.textContent = '外す';
+          }, 3000);
+          return;
+        }
+        clearTimeout(timer);
+        await AI.queue.setStatus(db, r.id, 'dismissed');
+        await render();
+      });
+      li.append(term, del, def, meta);
+      el.list.appendChild(li);
+    }
+    el.empty.hidden = items.length > 0;
+    el.empty.textContent = '答えられなかった質問はありません。';
+    el.count.textContent = `${items.length} 件`;
+  }
+
   // ---- タブ ----
   let tab = 'terms';
+  const TABS = { terms: el.tabTerms, passages: el.tabPassages, queue: el.tabQueue };
+  const PLACEHOLDER = { terms: '記憶を探す', passages: '文章を探す', queue: '' };
   function setTab(next) {
     tab = next;
-    el.tabTerms.setAttribute('aria-selected', String(tab === 'terms'));
-    el.tabPassages.setAttribute('aria-selected', String(tab === 'passages'));
-    el.search.placeholder = tab === 'terms' ? '記憶を探す' : '文章を探す';
+    for (const [name, button] of Object.entries(TABS)) button.setAttribute('aria-selected', String(tab === name));
+    el.search.placeholder = PLACEHOLDER[tab];
+    el.search.hidden = tab === 'queue'; // 未回答は件数が少ないので、検索欄は出さない
     el.search.value = '';
     return render();
   }
-  function render() {
-    return tab === 'terms' ? renderTerms() : renderPassages();
+  // 「未回答」タブに件数を出す（気づけるように）
+  async function updateBadge() {
+    const n = await AI.queue.count(db);
+    el.tabQueue.textContent = n ? `未回答 ${n}` : '未回答';
+  }
+  async function render() {
+    if (!db) return;
+    if (tab === 'terms') await renderTerms();
+    else if (tab === 'passages') await renderPassages();
+    else await renderQueue();
+    await updateBadge();
   }
   el.tabTerms.addEventListener('click', () => setTab('terms'));
   el.tabPassages.addEventListener('click', () => setTab('passages'));
+  el.tabQueue.addEventListener('click', () => setTab('queue'));
   el.search.addEventListener('input', render);
 
   fitInput();
