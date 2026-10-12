@@ -43,8 +43,8 @@
     }
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-  html { background: var(--bg); }
-  body { margin: 0; color: var(--ink); font: 16px/1.7 var(--sans); }
+  html { background: var(--bg); font-size: 14px; } /* rem の基準。全体の文字の大きさはここで決める */
+  body { margin: 0; color: var(--ink); font: 1rem/1.7 var(--sans); }
   button { font: inherit; color: inherit; cursor: pointer; }
   button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -163,8 +163,9 @@
   #send:disabled { opacity: .35; cursor: default; }
   #send svg { width: 20px; height: 20px; }
   html, body { touch-action: pan-x pan-y; } /* ピンチ拡大と、ダブルタップ拡大をしない */
-  #auto { font: inherit; font-size: .78rem; color: var(--sub); background: none; border: 1px solid currentColor; border-radius: 999px; padding: 0 14px; min-height: 44px; margin-right: 8px; cursor: pointer; }
+  #auto { font: inherit; font-size: .78rem; color: var(--sub); background: none; border: 1px solid currentColor; border-radius: 999px; padding: 0 14px; min-height: 44px; cursor: pointer; }
   #auto[aria-pressed="true"] { color: var(--accent, #c15f3c); font-weight: 600; }
+  #hint-text { display: block; margin-top: 2px; }
   #hint { max-width: 46rem; margin: 6px auto 0; text-align: center; font-size: .78rem; color: var(--sub); }
 
   /* 記憶パネル */
@@ -362,24 +363,24 @@
   </div>
 </div>
 
-<script src="js/normalize.js?v=0.10.10"></script>
-<script src="js/db.js?v=0.10.10"></script>
-<script src="js/terms.js?v=0.10.10"></script>
-<script src="js/chat.js?v=0.10.10"></script>
-<script src="js/wiki.js?v=0.10.10"></script>
-<script src="js/passages.js?v=0.10.10"></script>
-<script src="js/feedback.js?v=0.10.10"></script>
-<script src="js/net.js?v=0.10.10"></script>
-<script src="js/queue.js?v=0.10.10"></script>
-<script src="js/backup.js?v=0.10.10"></script>
-<script src="js/store.js?v=0.10.10"></script>
-<script src="js/embed.js?v=0.10.10"></script>
-<script src="js/llm.js?v=0.10.10"></script>
-<script src="js/rag.js?v=0.10.10"></script>
-<script src="js/growth.js?v=0.10.10"></script>
-<script src="js/sentiment.js?v=0.10.10"></script>
-<script src="js/vectors.js?v=0.10.10"></script>
-<script src="js/hybrid.js?v=0.10.10"></script>
-<script src="js/app.js?v=0.10.10"></script>
+<script src="js/normalize.js?v=0.10.11"></script>
+<script src="js/db.js?v=0.10.11"></script>
+<script src="js/terms.js?v=0.10.11"></script>
+<script src="js/chat.js?v=0.10.11"></script>
+<script src="js/wiki.js?v=0.10.11"></script>
+<script src="js/passages.js?v=0.10.11"></script>
+<script src="js/feedback.js?v=0.10.11"></script>
+<script src="js/net.js?v=0.10.11"></script>
+<script src="js/queue.js?v=0.10.11"></script>
+<script src="js/backup.js?v=0.10.11"></script>
+<script src="js/store.js?v=0.10.11"></script>
+<script src="js/embed.js?v=0.10.11"></script>
+<script src="js/llm.js?v=0.10.11"></script>
+<script src="js/rag.js?v=0.10.11"></script>
+<script src="js/growth.js?v=0.10.11"></script>
+<script src="js/sentiment.js?v=0.10.11"></script>
+<script src="js/vectors.js?v=0.10.11"></script>
+<script src="js/hybrid.js?v=0.10.11"></script>
+<script src="js/app.js?v=0.10.11"></script>
 </body>
 </html>
