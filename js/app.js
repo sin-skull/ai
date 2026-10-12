@@ -390,7 +390,9 @@
 
   // ---- 意味検索（言い換えでも見つける。モデルはブラウザの中で動かす）----
   const SEMANTIC_KEY = 'semantic';
-  const SEMANTIC_MIN = 0.8; // これ未満の近さは「関係ない」として捨てる。評価セットで調整する（docs/EVAL.md）
+  // これ未満の近さは「関係ない」として捨てる。e5-small の評価セット（docs/EVAL.md）で、正解が1位のときの最小 0.843、
+  // 関係ない質問の最大 0.831 だった間に置いた。差は小さい（0.012）ので、文章が増えたら測り直す。
+  const SEMANTIC_MIN = 0.84;
   let semantic = { enabled: false, pack: AI.embed.PACKS[0].id };
   let provider = null;
   let preparing = null; // 読み込み中のPromise（二重に読み込まない）
