@@ -568,14 +568,18 @@
   }
 
   // 文章を1件保存したあと、その分のベクトルを作る（失敗しても保存は有効。あとで「未作成を作る」で補える）
+  let embedding = 0; // ベクトルを作っている最中の数（その間は、意味検索のモデルを外さない）
   async function indexInBackground(passage) {
     if (!(semantic.enabled && provider)) return;
+    embedding++;
     try {
       await ensureReady();
       await AI.vectors.indexPassage(db, passage, provider);
       await renderSemantic();
     } catch (_) {
       await renderSemantic().catch(() => {});
+    } finally {
+      embedding--;
     }
   }
 
@@ -948,9 +952,15 @@
       let result;
       try {
         // 答えを作っている最中に落ちても、次の起動で気づけるように目印を付ける
+        // 答えを作る間は、意味検索のモデルをメモリから外す（2つ同時に載せない）。次の検索で読み直す
+        if (provider && provider.ready && provider.unload && !preparing && !embedding) await provider.unload();
         result = await guarded(llmPackOf(answerCfg.pack), async (mark) => {
           await mark('回答の作成');
           return AI.rag.answer({
+            onProgress: (p) => {
+              text.nodeValue = p.phase === 'read' ? `資料を分けて読んでいます…（${p.i}/${p.n}）` : `読んだ内容から答えを書いています…`;
+              scrollDown();
+            },
             query,
             hits,
             generator,
@@ -1216,7 +1226,6 @@
     const p = await AI.passages.add(db, c.extract, { title: c.title, sourceUrl: c.url, license: WIKI_LICENSE, terms: [query] });
     await AI.queue.resolve(db, query);
     await render();
-    indexInBackground(p);
     addMessage('ai', `Wikipedia「${c.title}」を文章として保存しました。`, {
       sub: '記事が違うときは、取り消して別の候補を選べます。',
       actions: [
@@ -1240,6 +1249,7 @@
     });
     const hits = [{ passage: p, snippet: p.body.slice(0, 80), score: 1, via: ['keyword'] }];
     await answerFromHits(query, hits);
+    indexInBackground(p); // 意味検索のベクトルは、答えを出し終えてから作る（同時に動かさない）
     return true;
   }
 

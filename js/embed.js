@@ -127,6 +127,18 @@
         if (extractor) return;
         extractor = await createPipeline('feature-extraction', pack, onProgress, '意味検索');
       },
+      // メモリから外す（ファイルは端末に残る。次に使うときは、保存済みから読み直す）
+      async unload() {
+        const e = extractor;
+        extractor = null;
+        if (e && e.dispose) {
+          try {
+            await e.dispose();
+          } catch (_) {
+            /* 外せなくても、参照は切ってある */
+          }
+        }
+      },
       async embed(texts, kind) {
         if (!extractor) throw new Error('モデルの準備ができていません');
         const prefix = kind === 'query' ? 'query: ' : 'passage: '; // e5 の決まり

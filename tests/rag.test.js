@@ -159,4 +159,57 @@
     const long = [{ passage: { id: 1, title: 't', body: 'あ。'.repeat(600) } }];
     ok(AI.rag.pickContext(long, 'あ', c)[0].text.length <= 250);
   });
+
+  // ---- 分けて読む ----
+  const longBody = Array.from({ length: 40 }, (_, i) => (i === 27 ? 'コンピュータは計算をする機械で、プログラムで動く。' : `関係ない話の文その${i}で、あまり意味はない。`)).join('');
+  const longHits = [{ passage: { id: 9, title: 'コンピュータ', body: longBody } }];
+
+  // 塊を読む係のときは、塊に関係する文があればそれを、無ければ「なし」を返す。最後の答えのときは final を返す
+  function scriptedGen(final) {
+    const g = { calls: [], ready: true, async generate(messages, opts) {
+      g.calls.push({ messages, opts });
+      const reading = messages[0].content.includes('資料を読む係');
+      const r = reading ? (messages[1].content.includes('計算をする機械') ? 'コンピュータは計算をする機械です。' : 'なし') : final;
+      if (opts && opts.onToken) opts.onToken(r);
+      return r;
+    } };
+    return g;
+  }
+
+  test('rag.makeChunks: 長い文章を塊に分け、質問に近い塊を選ぶ', () => {
+    const lim = AI.rag.limitsOf(0);
+    const chunks = AI.rag.makeChunks(longHits, 'コンピュータとは', lim);
+    ok(chunks.length <= lim.pieces && chunks.length >= 2);
+    ok(chunks.every((c) => c.text.length <= lim.chunk));
+    ok(chunks.some((c) => c.text.includes('計算をする機械')), '関係する塊が入る');
+  });
+
+  test('rag.answer: 長い資料は分けて読み、メモから答える（1回に読ませる量が小さい）', async () => {
+    const lim = AI.rag.limitsOf(0);
+    const gen = scriptedGen('コンピュータは計算をする機械で、プログラムで動きます。');
+    const seen = [];
+    const r = await AI.rag.answer({ query: 'コンピュータとは', hits: longHits, generator: gen, persona: {}, onProgress: (p) => seen.push(p.phase) });
+    ok(r.pieces >= 2, '分けて読んだ');
+    equal(gen.calls.length, r.pieces + 1, '塊ごとに1回＋最後に1回');
+    ok(gen.calls.slice(0, -1).every((c) => c.messages[1].content.length < lim.chunk + 120), '1回に読ませる量が小さい');
+    ok(gen.calls[gen.calls.length - 1].messages[1].content.includes('計算をする機械'), '最後はメモだけを読む');
+    ok(r.text.includes('プログラム'), `text=${r.text} pieces=${r.pieces}`);
+    ok(r.grounding >= 0.5, `grounding=${r.grounding}`);
+    ok(seen.includes('read') && seen[seen.length - 1] === 'write', seen.join(','));
+  });
+
+  test('rag.answer: 分けて読んで全部「なし」なら unknown（最後の答えは作らない）', async () => {
+    const gen = scriptedGen('使われないはず');
+    gen.generate = async (messages) => { gen.calls.push({ messages }); return 'なし'; };
+    const r = await AI.rag.answer({ query: 'コンピュータの値段', hits: longHits, generator: gen, persona: {} });
+    equal(r.unknown, true);
+    equal(gen.calls.length, r.pieces);
+  });
+
+  test('rag.isNone: メモの「なし」を見分ける', () => {
+    ok(AI.rag.isNone('なし'));
+    ok(AI.rag.isNone('「なし」。'));
+    ok(AI.rag.isNone('関係することはありません。'));
+    ok(!AI.rag.isNone('コンピュータは機械です。'));
+  });
 })();
