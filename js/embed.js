@@ -103,7 +103,7 @@
       }
     };
     try {
-      return await lib.pipeline(task, pack.model, { dtype: pack.dtype, device: 'wasm', progress_callback: progress });
+      return await lib.pipeline(task, pack.model, { dtype: pack.dtype, device: pack.device || 'wasm', progress_callback: progress });
     } catch (error) {
       if (AI.net.isOffline()) {
         throw new Error(`モデルがこの端末にありません。オンラインモードで「${featureName}を有効にする」を行ってください。`);

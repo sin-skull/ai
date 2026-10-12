@@ -16,6 +16,19 @@
   const HOSTS = ['huggingface.co（モデル）', 'cdn.jsdelivr.net（実行用ファイル）'];
   const PACKS = [
     {
+      id: 'lfm2-350m-gpu',
+      label: '日本語対応・GPU版（LFM2 350M）',
+      model: 'onnx-community/LFM2-350M-ONNX',
+      dtype: 'q4',
+      device: 'webgpu',
+      requiresWebGPU: true,
+      approxMB: 300,
+      version: 1,
+      license: 'LFM Open License v1.0（年間売上が一定額未満なら商用も可。配布前に条件を確認する）',
+      note: 'GPUで動かす試験的な版。メモリの使い方が違うので、CPU版が落ちる端末で動く可能性がある（実機は未確認）。GPUに対応していない端末では選べない',
+      hosts: HOSTS,
+    },
+    {
       id: 'lfm2-350m',
       label: '日本語対応（LFM2 350M）',
       model: 'onnx-community/LFM2-350M-ONNX',
@@ -97,5 +110,5 @@
     };
   }
 
-  AI.llm = { PACKS, transformersGenerator };
+  AI.llm = { available: () => PACKS.filter((p) => !p.requiresWebGPU || (typeof navigator !== 'undefined' && !!navigator.gpu)), PACKS, transformersGenerator };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

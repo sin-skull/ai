@@ -696,13 +696,13 @@
 
   // ---- 回答モデル（保存した文章を読んで、文章で答える）----
   const ANSWER_KEY = 'answer';
-  let answerCfg = { enabled: false, pack: AI.llm.PACKS[0].id, persona: { preset: 'polite', custom: '' } };
+  let answerCfg = { enabled: false, pack: AI.llm.available()[0].id, persona: { preset: 'polite', custom: '' } };
   let generator = null;
   let generatorPreparing = null;
   let answerWarned = false;
   let busy = false; // 回答の生成中は次の生成を始めない（端末が重くなる）
 
-  const llmPackOf = (id) => AI.llm.PACKS.find((p) => p.id === id) || AI.llm.PACKS[0];
+  const llmPackOf = (id) => AI.llm.PACKS.find((p) => p.id === id) || AI.llm.available()[0];
 
   async function loadAnswer() {
     const row = await getSetting(ANSWER_KEY);
@@ -752,7 +752,7 @@
     const pack = llmPackOf(answerCfg.pack);
     el.llmChoice.hidden = answerCfg.enabled; // 使用中は変えられない（オフにしてから選ぶ）
     if (!el.llmPack.options.length) {
-      for (const p of AI.llm.PACKS) {
+      for (const p of AI.llm.available()) {
         const o = document.createElement('option');
         o.value = p.id;
         o.textContent = `${p.label} 約${p.approxMB}MB`;
