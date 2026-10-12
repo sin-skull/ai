@@ -222,6 +222,10 @@ async function describeEnv() {
   const lines = [];
   lines.push(`ブラウザ：${navigator.userAgent.replace(/^Mozilla\/5\.0 /, '')}`);
   lines.push(`CPUの数：${navigator.hardwareConcurrency || '不明'}`);
+  // iPhone の Chrome も、ふつうは中身が Safari と同じ（WebKit）。Chrome 本来の中身（Blink）なら、JSPI という機能がある
+  const jspi = !!(self.WebAssembly && WebAssembly.Suspending);
+  const engine = /CriOS|EdgiOS|FxiOS/.test(navigator.userAgent) ? (jspi ? 'iPhone の Chrome（中身は Chrome 本来の Blink と思われる）' : 'iPhone の Chrome など（中身は Safari と同じ WebKit）') : jspi ? 'Chrome 系（Blink）' : 'Safari 系（WebKit）';
+  lines.push(`中身のエンジン：${engine}`);
   let gpu = '無し';
   try {
     if (navigator.gpu) {
