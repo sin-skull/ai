@@ -289,9 +289,20 @@
         },
       },
     ];
-    if (index + 1 < list.length) {
-      actions.push({ label: '次の候補', run: async () => showCandidate(query, list, index + 1, ctx) });
-    }
+    // 他の候補は、題名を見て直接選べるようにする（順番に送らなくてよい）
+    list.forEach((other, i) => {
+      if (i === index) return;
+      actions.push({ label: `候補: ${other.title}`, run: async () => showCandidate(query, list, i, ctx) });
+    });
+    actions.push({
+      label: '別の言葉で調べる',
+      run: async () => {
+        el.input.value = query;
+        fitInput();
+        el.input.focus();
+        addMessage('ai', '入力欄に言葉を入れました。直して送ってください。知らない語なら、もう一度Wikipediaで調べるボタンが出ます。');
+      },
+    });
     if (ctx) {
       actions.push({
         label: 'あとで',
@@ -328,7 +339,10 @@
       addMessage('ai', 'いまオフラインなので、調べられません。');
       return;
     }
-    addMessage('ai', `Wikipediaで「${query}」を調べています…`);
+    const term = AI.wiki.searchTerm(query);
+    addMessage('ai', term === query ? `Wikipediaで「${query}」を調べています…` : `Wikipediaで「${term}」を調べています…`, {
+      sub: term === query ? '' : '文のままだと的外れな記事が出やすいので、言葉だけ取り出して送っています。',
+    });
     let list;
     try {
       list = await AI.wiki.search(query);
