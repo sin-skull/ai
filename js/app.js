@@ -129,6 +129,28 @@
     el.drawer.inert = !(wide.matches || open);
     if (overlay) el.close.focus();
   }
+
+  // 横にスワイプして、記憶パネルを開け閉めする（右へ：開く／左へ：閉じる）。縦スクロールや入力中は反応しない
+  {
+    let start = null;
+    document.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      const blocked = e.touches.length !== 1 || wide.matches || (e.target.closest && e.target.closest('input, textarea, select, svg, pre, [data-noswipe]'));
+      start = blocked ? null : { x: t.clientX, y: t.clientY, at: Date.now() };
+    }, { passive: true });
+    document.addEventListener('touchend', (e) => {
+      if (!start) return;
+      const t = e.changedTouches[0];
+      const dx = t.clientX - start.x;
+      const dy = t.clientY - start.y;
+      const quick = Date.now() - start.at < 700;
+      start = null;
+      if (!quick || Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 2) return;
+      const open = el.drawer.classList.contains('open');
+      if (dx > 0 && !open) setDrawer(true);
+      else if (dx < 0 && open) setDrawer(false);
+    }, { passive: true });
+  }
   onChange(wide, () => setDrawer(false));
   el.menu.addEventListener('click', () => setDrawer(true));
   el.close.addEventListener('click', () => {
@@ -904,15 +926,19 @@
       const text = msg.querySelector('.body').childNodes[0];
       let result;
       try {
-        result = await AI.rag.answer({
-          query,
-          hits,
-          generator,
-          persona: answerCfg.persona,
-          onToken: (t) => {
-            text.nodeValue = t;
-            scrollDown();
-          },
+        // 答えを作っている最中に落ちても、次の起動で気づけるように目印を付ける
+        result = await guarded(llmPackOf(answerCfg.pack), async (mark) => {
+          await mark('回答の作成');
+          return AI.rag.answer({
+            query,
+            hits,
+            generator,
+            persona: answerCfg.persona,
+            onToken: (t) => {
+              text.nodeValue = t;
+              scrollDown();
+            },
+          });
         });
       } catch (error) {
         msg.remove();
