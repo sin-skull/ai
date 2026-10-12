@@ -131,4 +131,25 @@
     equal(m.map((x) => x.role).join(','), 'system,user,assistant,user');
     ok(m[1].content.includes('睡眠時間は') && m[2].content === '7時間');
   });
+
+  test('rag.missingTerms: 資料に出てこない固有名詞を見つける', () => {
+    equal(JSON.stringify(AI.rag.missingTerms('アセロラはジャンクフード？', 'ジャンクフードは栄養価の低い食品')), JSON.stringify(['アセロラ']));
+    equal(AI.rag.missingTerms('ジャンクフードとは', 'ジャンクフードは栄養価の低い食品').length, 0);
+    equal(AI.rag.missingTerms('なんで体に悪いの', '本文').length, 0);
+  });
+
+  test('rag.answer: 資料に無い語を聞かれたら、モデルを呼ばずに unknown', async () => {
+    const gen = fakeGen('なにか');
+    const r = await AI.rag.answer({ query: 'アセロラは？', hits, generator: gen, persona: {} });
+    equal(r.unknown, true);
+    equal(gen.calls.length, 0);
+    ok(r.missing.includes('アセロラ'));
+  });
+
+  test('rag.tidy: 長い答えを3文までに切り、箇条書きの記号を外す', () => {
+    const t = AI.rag.tidy('A。B。C。D。E。');
+    equal(t, 'A。B。C。');
+    equal(AI.rag.tidy('**肥満**: 太る。\n\n1. 糖尿病。'), '肥満: 太る。\n糖尿病。');
+    ok(AI.rag.tidy('あ'.repeat(500)).length <= 220);
+  });
 })();

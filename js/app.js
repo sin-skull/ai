@@ -964,13 +964,23 @@
       const evidenceActions = result.evidence.map((e) => ({ label: `[${e.n}] ${e.passage.title}`, run: async () => showPassage(e.passage, false) }));
       if (result.unknown) {
         await notKnown(query, {
-          lead: `保存した文章には、「${query}」の答えが見つかりませんでした。`,
+          lead: result.missing ? `保存した文章には、「${result.missing.join('」「')}」が出てきません。` : `保存した文章には、「${query}」の答えが見つかりませんでした。`,
           actions: evidenceActions.map((a) => ({ ...a, label: `近い文章 ${a.label}` })),
         });
         return true;
       }
       AI.growth.markUsed(db, 'passage', result.evidence.map((e) => e.passage.id)).catch(() => {}); // 根拠に使われた
       lastAnswer = { targets: [{ type: 'passage', id: result.evidence[0].passage.id, label: result.evidence[0].passage.title }] };
+      // 資料に無い言葉が多すぎる答えは、そのまま出さない。資料から文を抜き出して出す
+      if (result.grounding < 0.4) {
+        const picked = await AI.rag.extractAnswer({ query, hits }).catch(() => null);
+        const topicQ = history && history[0] ? history[0].q : query;
+        addMessage('ai', picked ? picked.text : '資料から答えを取り出せませんでした。', {
+          sub: `モデルの答えに、保存した文章に無い内容が多かったので、文章から抜き出しました。\n根拠：[1] ${result.evidence[0].passage.title}\nもし良ければ、Wikipediaで調べましょうか？`,
+          actions: evidenceActions.concat([{ label: 'Wikipediaで調べる', run: async () => searchWikipedia(topicQ) }]),
+        });
+        return true;
+      }
       lastChat = { query, text: result.text, hits };
       const weak = result.grounding < 0.5;
       const warn = weak ? '⚠ 保存した文章に無い言葉が多く含まれています。根拠を確かめてください。\nもし良ければ、Wikipediaで調べましょうか？\n' : '';

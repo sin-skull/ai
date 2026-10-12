@@ -116,11 +116,37 @@
   }
 
   // 回答を作る。戻り値: { text, unknown, evidence: [{passage, n}], grounding }
+  // 質問の中の固有名詞っぽい語（カタカナ3字以上・英数字3字以上）が、資料にも前の会話にも出てこないか。
+  // 出てこなければ、モデルに聞く前に「資料には無い」と分かる（作り話を防ぐ）
+  function missingTerms(query, haystack) {
+    const found = String(query || '').match(/[ァ-ヶー]{3,}|[A-Za-z0-9]{3,}/g) || [];
+    const hay = AI.normalizeTerm(haystack || '');
+    return [...new Set(found)].filter((t) => !hay.includes(AI.normalizeTerm(t)));
+  }
+
+  // 小さなモデルは「2〜3文」の指示を守らず、長く・箇条書きで話し続けるので、先頭の3文までに切る
+  function tidy(text, maxSentences = 3, maxChars = 220) {
+    const plain = String(text || '').replace(/\*\*/g, '').replace(/^\s*\d+\.\s*/gm, '').replace(/\n{2,}/g, '\n').trim();
+    const sentences = plain.match(/[^。！？!?]+[。！？!?]/g) || [];
+    if (!sentences.length) return plain.slice(0, maxChars);
+    let out = '';
+    for (const sentence of sentences.slice(0, maxSentences)) {
+      if (out && (out + sentence).length > maxChars) break;
+      out += sentence;
+    }
+    return out.trim();
+  }
+
   async function answer({ query, hits, generator, persona, onToken, maxTokens, history }) {
     const context = pickContext(hits, query);
     if (!context.length) return { text: '', unknown: true, evidence: [], grounding: 0 };
+    const hay = context.map((c) => c.text).join('\n') + (history || []).map((h) => `${h.q}\n${h.a}`).join('\n');
+    const missing = missingTerms(query, hay);
+    if (missing.length) {
+      return { text: '', unknown: true, missing, evidence: context.map((c) => ({ passage: c.passage, n: c.n })), grounding: 0 };
+    }
     const messages = buildMessages(query, context, persona, history);
-    const text = (await generator.generate(messages, { maxTokens: maxTokens || 160, onToken })).trim();
+    const text = tidy(await generator.generate(messages, { maxTokens: maxTokens || 160, onToken }));
     const unknown = isUnknown(text);
     const ground = unknown ? 0 : grounding(text, context.map((c) => c.text).join('\n'));
     return { text, unknown, evidence: context.map((c) => ({ passage: c.passage, n: c.n })), grounding: ground };
@@ -170,5 +196,5 @@
   const FOLLOW_UP = /^(それ|これ|あれ|その|この|あの|じゃあ|では|なんで|なぜ|どうして|どうやって|もっと|他に|ほかに|詳しく|くわしく|つまり|それで|でも)|(それ|これ|あれ|その|この|あの)(って|は|を|の|に|も)?/;
   const isFollowUp = (query) => FOLLOW_UP.test(String(query || '').trim()) && String(query || '').trim().length <= 30;
 
-  AI.rag = { isFollowUp, splitSentences, extractAnswer, MAX_PASSAGES, MAX_EACH, MAX_TOTAL, PERSONAS, personaText, excerpt, pickContext, buildMessages, isUnknown, grounding, answer };
+  AI.rag = { isFollowUp, missingTerms, tidy, splitSentences, extractAnswer, MAX_PASSAGES, MAX_EACH, MAX_TOTAL, PERSONAS, personaText, excerpt, pickContext, buildMessages, isUnknown, grounding, answer };
 })(typeof globalThis !== 'undefined' ? globalThis : window);
