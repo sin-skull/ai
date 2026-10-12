@@ -744,10 +744,11 @@
     if (tried && tried.value) {
       const wasPack = llmPackOf(tried.value.pack);
       await putSetting(TRY_KEY, null);
-      answerCfg = { ...answerCfg, enabled: false };
+      const raise = tried.value.stage === '回答の作成' && (answerCfg.load || 0) < AI.rag.LOAD_LEVELS.length - 1;
+      answerCfg = { ...answerCfg, enabled: false, load: (answerCfg.load || 0) + (raise ? 1 : 0) };
       await saveAnswerCfg();
-            addMessage('ai', `前回、回答モデル（${wasPack.label}）の${tried.value.stage || '読み込み'}中にアプリが落ちたようです。回答モデルはオフにしました。`, {
-        sub: '原因はまだ分かっていません（メモリ不足とは限りません）。保存した文章の検索と、文章の抜き出しはそのまま使えます。下のボタンから、すぐ選び直せます。',
+      addMessage('ai', `前回、回答モデル（${wasPack.label}）の${tried.value.stage || '読み込み'}中にアプリが落ちたようです。回答モデルはオフにしました。`, {
+        sub: `原因はまだ分かっていません（メモリ不足とは限りません）。${raise ? '次は、読ませる資料と答えの長さを減らして（負荷を1段下げて）試します。' : ''}保存した文章の検索と、文章の抜き出しはそのまま使えます。下のボタンから、すぐ選び直せます。`,
         actions: AI.llm.available().map((p) => ({
           label: `${p.label}で有効にする`,
           main: p.id !== wasPack.id,
@@ -947,6 +948,7 @@
             hits,
             generator,
             history,
+            load: answerCfg.load,
             persona: answerCfg.persona,
             onToken: (t) => {
               text.nodeValue = t;

@@ -56,11 +56,20 @@
   }
 
   // 検索結果から、プロンプトに入れる資料を選ぶ
-  function pickContext(hits, query) {
+  // 端末の負荷の段階。落ちるたびに1段上がり、資料の量と答えの長さを減らす（0:ふつう 1:軽め 2:最小）
+  const LOAD_LEVELS = [
+    { passages: MAX_PASSAGES, each: MAX_EACH, total: MAX_TOTAL, tokens: 256 },
+    { passages: 2, each: 350, total: 600, tokens: 160 },
+    { passages: 1, each: 250, total: 250, tokens: 100 },
+  ];
+  const limitsOf = (level) => LOAD_LEVELS[Math.max(0, Math.min(LOAD_LEVELS.length - 1, level | 0))];
+
+  function pickContext(hits, query, limits) {
+    const lim = limits || limitsOf(0);
     const out = [];
     let total = 0;
-    for (const h of hits.slice(0, MAX_PASSAGES)) {
-      const room = Math.min(MAX_EACH, MAX_TOTAL - total);
+    for (const h of hits.slice(0, lim.passages)) {
+      const room = Math.min(lim.each, lim.total - total);
       if (room < 60) break;
       const text = excerpt(h.passage.body, query, room);
       total += text.length;
@@ -137,8 +146,9 @@
     return out.trim();
   }
 
-  async function answer({ query, hits, generator, persona, onToken, maxTokens, history }) {
-    const context = pickContext(hits, query);
+  async function answer({ query, hits, generator, persona, onToken, maxTokens, history, load }) {
+    const lim = limitsOf(load);
+    const context = pickContext(hits, query, lim);
     if (!context.length) return { text: '', unknown: true, evidence: [], grounding: 0 };
     const hay = context.map((c) => c.text).join('\n') + (history || []).map((h) => `${h.q}\n${h.a}`).join('\n');
     const missing = missingTerms(query, hay);
@@ -146,7 +156,7 @@
       return { text: '', unknown: true, missing, evidence: context.map((c) => ({ passage: c.passage, n: c.n })), grounding: 0 };
     }
     const messages = buildMessages(query, context, persona, history);
-    const text = tidy(await generator.generate(messages, { maxTokens: maxTokens || 256, onToken }));
+    const text = tidy(await generator.generate(messages, { maxTokens: maxTokens || lim.tokens, onToken }));
     const unknown = isUnknown(text);
     const ground = unknown ? 0 : grounding(text, context.map((c) => c.text).join('\n'));
     return { text, unknown, evidence: context.map((c) => ({ passage: c.passage, n: c.n })), grounding: ground };
@@ -196,5 +206,5 @@
   const FOLLOW_UP = /^(それ|これ|あれ|その|この|あの|じゃあ|では|なんで|なぜ|どうして|どうやって|もっと|他に|ほかに|詳しく|くわしく|つまり|それで|でも)|(それ|これ|あれ|その|この|あの)(って|は|を|の|に|も)?/;
   const isFollowUp = (query) => FOLLOW_UP.test(String(query || '').trim()) && String(query || '').trim().length <= 30;
 
-  AI.rag = { isFollowUp, missingTerms, tidy, splitSentences, extractAnswer, MAX_PASSAGES, MAX_EACH, MAX_TOTAL, PERSONAS, personaText, excerpt, pickContext, buildMessages, isUnknown, grounding, answer };
+  AI.rag = { LOAD_LEVELS, limitsOf, isFollowUp, missingTerms, tidy, splitSentences, extractAnswer, MAX_PASSAGES, MAX_EACH, MAX_TOTAL, PERSONAS, personaText, excerpt, pickContext, buildMessages, isUnknown, grounding, answer };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

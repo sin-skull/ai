@@ -152,4 +152,11 @@
     equal(AI.rag.tidy('**肥満**: 太る。\n\n1. 糖尿病。'), '肥満: 太る。\n糖尿病。');
     ok(AI.rag.tidy('あ'.repeat(900)).length <= 600);
   });
+
+  test('rag.limitsOf: 負荷の段階が上がるほど、資料と答えが小さくなる', () => {
+    const a = AI.rag.limitsOf(0), b = AI.rag.limitsOf(1), c = AI.rag.limitsOf(99);
+    ok(a.total > b.total && b.total > c.total && a.tokens > b.tokens && b.tokens > c.tokens);
+    const long = [{ passage: { id: 1, title: 't', body: 'あ。'.repeat(600) } }];
+    ok(AI.rag.pickContext(long, 'あ', c)[0].text.length <= 250);
+  });
 })();
