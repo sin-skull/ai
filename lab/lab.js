@@ -4,7 +4,7 @@
   'use strict';
   const $ = (s) => document.querySelector(s);
   const el = {
-    env: $('#env'), model: $('#model'), engine: $('#engine'), swap: $('#swap'), condNote: $('#cond-note'), runAll: $('#run-all'), stop: $('#stop'),
+    env: $('#env'), model: $('#model'), engine: $('#engine'), runtime: $('#runtime'), swap: $('#swap'), condNote: $('#cond-note'), runAll: $('#run-all'), stop: $('#stop'),
     unload: $('#unload'), status: $('#status'), out: $('#out'), results: $('#results tbody'), copy: $('#copy'), clearResults: $('#clear-results'),
     diag: $('#diag'), cache: $('#cache'), clearCache: $('#clear-cache'), log: $('#log'), crash: $('#crash'),
   };
@@ -33,6 +33,7 @@
     showNote();
   });
   el.engine.addEventListener('change', resetModel);
+  el.runtime.addEventListener('change', resetModel);
   showNote();
 
   function log(text) {
@@ -71,7 +72,7 @@
     el.results.replaceChildren();
     for (const r of store.get(RESULTS_KEY, []).slice().reverse()) {
       const tr = document.createElement('tr');
-      const cells = [`${r.test}\n${r.model}／${r.engine}${r.swap ? '＋入替' : ''}`, r.result, r.first != null ? `${r.first}秒` : '—', r.speed != null ? `${r.speed}` : '—', r.quality || '—'];
+      const cells = [`${r.test}\n${r.model}／${r.engine}${r.runtime ? `／${r.runtime}` : ''}${r.swap ? '＋入替' : ''}`, r.result, r.first != null ? `${r.first}秒` : '—', r.speed != null ? `${r.speed}` : '—', r.quality || '—'];
       cells.forEach((c, i) => {
         const td = document.createElement('td');
         td.textContent = c;
@@ -98,7 +99,7 @@
     lines.push(`アプリ：${app}`);
     lines.push(`ブラウザ：${ua.replace(/^Mozilla\/5\.0 /, '')}`);
     lines.push(`CPUの数：${navigator.hardwareConcurrency || '不明'}`);
-    lines.push(`実行用ファイル：${AI.llm.needCompat() ? '互換版（遅い）' : '速い版（JSPI・64bitメモリあり）'}`);
+    lines.push(`使える機能：${AI.llm.needCompat() ? 'JSPI か 64bitメモリが無い' : 'JSPI・64bitメモリあり'}／自動で選ぶ実行用ファイル：${AI.llm.runtimeOf('auto') === 'compat' ? '互換版' : '速い版'}`);
     let gpu = '無し';
     try {
       if (navigator.gpu) {
@@ -126,7 +127,7 @@
   let loadedKey = '';
   models.register('llm', () => generator);
   models.register('embed', () => provider);
-  const currentKey = () => `${el.model.value}@${el.engine.value}`;
+  const currentKey = () => `${el.model.value}@${el.engine.value}@${el.runtime.value}`;
   function resetModel() {
     if (generator && loadedKey !== currentKey()) {
       const g = generator;
@@ -137,7 +138,7 @@
   }
   function ensureGenerator() {
     if (!generator || loadedKey !== currentKey()) {
-      generator = AI.llm.createGenerator(packOf(), { engine: el.engine.value, diag });
+      generator = AI.llm.createGenerator(packOf(), { engine: el.engine.value, runtime: el.runtime.value, diag });
       loadedKey = currentKey();
     }
     return generator;
@@ -213,7 +214,7 @@
       .slice(0, limit);
   }
 
-  const base = () => ({ model: packOf().id, engine: el.engine.value, swap: el.swap.checked });
+  const base = () => ({ model: packOf().id, engine: el.engine.value, runtime: AI.llm.runtimeOf(el.runtime.value) === 'compat' ? '互換版' : '速い版', swap: el.swap.checked });
   const persona = { preset: 'polite' };
 
   const TESTS = {
@@ -312,7 +313,7 @@
   function setRunning(on) {
     running = on;
     document.querySelectorAll('button[data-test], #run-all, #unload, #clear-cache').forEach((b) => (b.disabled = on));
-    el.model.disabled = el.engine.disabled = el.swap.disabled = on;
+    el.model.disabled = el.engine.disabled = el.runtime.disabled = el.swap.disabled = on;
     el.stop.disabled = !on;
   }
   async function runTests(names) {
@@ -369,7 +370,7 @@
 
   // ---- 結果のコピー ----
   el.copy.addEventListener('click', async () => {
-    const rows = store.get(RESULTS_KEY, []).map((r) => `${r.test}｜${r.model}／${r.engine}${r.swap ? '＋入替' : ''}｜${r.result}｜最初${r.first ?? '—'}秒｜${r.speed ?? '—'}字/秒｜${r.quality || '—'}`);
+    const rows = store.get(RESULTS_KEY, []).map((r) => `${r.test}｜${r.model}／${r.engine}${r.runtime ? `／${r.runtime}` : ''}${r.swap ? '＋入替' : ''}｜${r.result}｜最初${r.first ?? '—'}秒｜${r.speed ?? '—'}字/秒｜${r.quality || '—'}`);
     const text = [el.env.textContent, '', '[結果]', ...rows, '', '[段階の記録]', el.diag.textContent].join('\n');
     try {
       await navigator.clipboard.writeText(text);
@@ -393,7 +394,7 @@
       el.crash.style.display = 'block';
       el.crash.textContent = `前回、「${diag.describe(crash)}」の途中でページが強制終了しました。結果に記録しました。同じ条件はくり返さず、軽い条件（動かし方・モデル）で試してください。`;
       const i = crash.info || {};
-      addResult({ model: i.model || '?', engine: i.engine || '?', test: '強制終了', ok: false, result: `落ちた：${diag.describe(crash)}` });
+      addResult({ model: i.model || '?', engine: i.engine || '?', runtime: i.runtime, test: '強制終了', ok: false, result: `落ちた：${diag.describe(crash)}` });
     }
     renderResults();
     renderDiag();

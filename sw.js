@@ -1,7 +1,7 @@
 // Service Worker：アプリ本体をキャッシュして、電波が無くても開けるようにする。
 // VERSION は index.html のスクリプトの ?v= と同じにする（tests で食い違いを検出）。
 // 外部（Wikipedia など）の通信はここでは扱わない。同じオリジンのファイルだけを対象にする。
-const VERSION = '0.12.0';
+const VERSION = '0.12.1';
 const CACHE = `ai-${VERSION}`;
 // 同梱の実行用ファイルは、フォルダ名に版が入っているので、アプリの版とは別に長く保存する
 const VENDOR_CACHE = 'ai-vendor-1';

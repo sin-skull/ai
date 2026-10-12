@@ -22,7 +22,7 @@
     unload: 'モデルを外す',
   };
   // 記録してよい項目（これ以外は捨てる）
-  const ALLOWED = ['engine', 'model', 'pack', 'chars', 'tokens', 'load', 'piece', 'pieces', 'done', 'total', 'boot', 'turn'];
+  const ALLOWED = ['engine', 'model', 'pack', 'chars', 'tokens', 'load', 'piece', 'pieces', 'done', 'total', 'boot', 'turn', 'runtime', 'sub'];
   const MAX_EVENTS = 200;
 
   function sanitize(info) {
@@ -32,7 +32,7 @@
       const v = info[key];
       if (typeof v === 'number' && Number.isFinite(v)) out[key] = v;
       else if (typeof v === 'boolean') out[key] = v;
-      else if (typeof v === 'string') out[key] = v.slice(0, 40);
+      else if (typeof v === 'string') out[key] = v.slice(0, key === 'sub' ? 90 : 40);
     }
     return out;
   }
@@ -126,6 +126,13 @@
           throw error;
         }
       },
+      // 段階の中の細かい進み具合（例：初期化の中の「実行用ファイルの準備」）。強制終了したら、最後に書いた内容が残る。
+      // 実行ライブラリの記録だけを渡す（質問の本文は渡さない）
+      note(text) {
+        if (!current) return;
+        current.info = { ...current.info, sub: String(text).replace(/\s+/g, ' ').slice(0, 90) };
+        write(KEY_CUR, current);
+      },
       markClean() {
         write(KEY_CLEAN, Date.now());
       },
@@ -145,6 +152,8 @@
         if (i.pieces) parts.push(`塊${i.piece || '?'}/${i.pieces}`);
         if (i.turn) parts.push(`${i.turn}問目`);
         if (typeof i.load === 'number') parts.push(`答えの量${i.load}`);
+        if (i.runtime) parts.push(i.runtime);
+        if (i.sub) parts.push(`最後の処理：${i.sub}`);
         return `${STAGES[event.stage] || event.stage}${parts.length ? `（${parts.join('・')}）` : ''}`;
       },
     };

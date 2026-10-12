@@ -103,40 +103,84 @@
     }
     return !jspi || !mem64;
   }
+  // iPhone・iPad の全てのブラウザと、パソコンの Safari（中身が WebKit）
+  function isWebKit() {
+    if (typeof navigator === 'undefined') return false;
+    const ua = navigator.userAgent || '';
+    if (/iPhone|iPad|iPod/.test(ua)) return true;
+    return /AppleWebKit/.test(ua) && /Safari/.test(ua) && !/Chrome|Chromium|Edg|OPR/.test(ua);
+  }
+  // 実行用ファイルの種類：'compat'（互換版）か 'fast'（速い版）。
+  // 'auto' のとき：必要な機能が無ければ互換版。WebKit（Safari）も互換版にする。
+  // 実機（iPhone・Safari 27、JSPI あり）で、速い版は極小モデルの初期化から先へ進まなかった（v0.12.1 の試験室の記録）。
+  // wllama の説明でも、Safari で速い版は「動かない」とされている。
+  function runtimeOf(choice = 'auto') {
+    if (choice === 'compat' || choice === 'fast') return choice;
+    return needCompat() || isWebKit() ? 'compat' : 'fast';
+  }
   // 実行用ファイル（wasm）は、ページ側で取得して blob にしてから渡す。
   // 計算を受け持つ worker が自分で取りに行くと、Service Worker を通らず、オフラインで読めないことがあるため。
-  let assetsPromise = null;
-  function wllamaAssets() {
-    if (!assetsPromise) {
-      assetsPromise = (async () => {
+  const assetsCache = {};
+  function wllamaAssets(runtime = runtimeOf()) {
+    if (!assetsCache[runtime]) {
+      assetsCache[runtime] = (async () => {
         const blobUrl = async (url) => {
           const r = await fetch(url);
           if (!r.ok) throw new Error(`実行用ファイルを読めませんでした（${r.status}）`);
           return URL.createObjectURL(await r.blob());
         };
-        if (needCompat()) {
+        if (runtime === 'compat') {
           const code = await (await fetch(vendorUrl('wllama-compat-3.6.1/wasm/wllama.js'))).text();
-          return { compat: true, paths: { default: vendorUrl('wllama-3.6.1/wasm/wllama.wasm') }, compatRes: { worker: { code }, wasm: await blobUrl(vendorUrl('wllama-compat-3.6.1/wasm/wllama.wasm')) } };
+          return { runtime, paths: { default: vendorUrl('wllama-3.6.1/wasm/wllama.wasm') }, compatRes: { worker: { code }, wasm: await blobUrl(vendorUrl('wllama-compat-3.6.1/wasm/wllama.wasm')) } };
         }
-        return { compat: false, paths: { default: await blobUrl(vendorUrl('wllama-3.6.1/wasm/wllama.wasm')) }, compatRes: null };
+        return { runtime, paths: { default: await blobUrl(vendorUrl('wllama-3.6.1/wasm/wllama.wasm')) }, compatRes: null };
       })().catch((e) => {
-        assetsPromise = null;
+        delete assetsCache[runtime];
         throw e;
       });
     }
-    return assetsPromise;
+    return assetsCache[runtime];
   }
-  // assets を渡さないとき（保存済みモデルの確認・削除だけ）は、計算はしないので URL のままでよい
-  function newWllama(mod, assets) {
+  // assets を渡さないとき（保存済みモデルの確認・削除だけ）は、計算はしないので URL のままでよい。
+  // onLog：実行ライブラリの記録（初期化の細かい進み具合）を受け取る
+  function newWllama(mod, assets, onLog) {
+    const relay = (level) => (...args) => {
+      if (onLog) onLog(args.map((x) => (typeof x === 'string' ? x : '')).join(' ').trim(), level);
+    };
+    const logger = onLog ? { debug: relay('debug'), log: relay('log'), info: relay('info'), warn: relay('warn'), error: relay('error') } : mod.LoggerWithoutDebug;
     const w = new mod.Wllama(assets ? assets.paths : { default: vendorUrl('wllama-3.6.1/wasm/wllama.wasm') }, {
-      logger: mod.LoggerWithoutDebug,
+      logger,
       allowOffline: true,
       parallelDownloads: 2,
-      suppressNativeLog: true,
+      suppressNativeLog: !onLog,
     });
-    // 互換版も、外部のCDNではなく同梱分を使う
-    w.setCompat(assets && assets.compatRes ? assets.compatRes : null);
+    if (assets && assets.runtime === 'compat') {
+      // 互換版を必ず使う（wllama は、機能があると判断すると速い版を選ぶため、ここで上書きする）。互換版も同梱分を使う
+      w.setCompat(assets.compatRes);
+      w.getWorkerResources = () => ({ wasmPath: assets.compatRes.wasm, jsPath: assets.compatRes.worker, compat: true });
+    } else {
+      w.setCompat(null);
+    }
     return w;
+  }
+
+  // 時間内に終わらなければ、止まったと見なす（強制終了より先に、こちらで気づく）
+  function withTimeout(promise, ms, message) {
+    let timer = null;
+    return Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms);
+      }),
+    ]).finally(() => clearTimeout(timer));
+  }
+  // 止まった計算用の worker を止める（exit は、止まった worker には届かない）
+  function killWorker(w) {
+    try {
+      if (w && w.proxy && w.proxy.worker) w.proxy.worker.terminate();
+    } catch (_) {
+      /* 止められなくても参照は捨てる */
+    }
   }
 
   // 保存済みのモデル（wllama の保存領域）
@@ -156,11 +200,14 @@
 
   // diag：段階の記録（AI.diag.create の戻り値）。無くても動く
   // offline()：true ならダウンロードしない（保存分が無ければエラー）
-  function wllamaGenerator(pack, { engine = 'cpu', diag = null, nCtx = 3072, offline = () => false } = {}) {
+  function wllamaGenerator(pack, { engine = 'cpu', runtime: runtimeChoice = 'auto', diag = null, nCtx = 3072, offline = () => false } = {}) {
     let wllama = null;
     let abort = null;
     const gpuLayers = (ENGINES[engine] || ENGINES.cpu).gpuLayers(pack);
-    const info = (extra) => ({ engine, model: pack.id, ...extra });
+    const runtime = runtimeOf(runtimeChoice);
+    const info = (extra) => ({ engine, model: pack.id, runtime: runtime === 'compat' ? '互換版' : '速い版', ...extra });
+    // 初期化にかける時間の上限：極小モデルは1分、ほかは 2分＋大きさに応じて（CPUの1スレッドで読む前提）
+    const initLimitMs = pack.approxMB < 5 ? 60000 : 120000 + pack.approxMB * 400;
     const step = (stage, extra, fn) => (diag ? diag.step(stage, info(extra), fn) : fn());
     return {
       id: `${pack.id}@${engine}`,
@@ -173,7 +220,11 @@
       async prepare(onProgress) {
         if (wllama) return;
         const mod = await loadWllama();
-        const w = newWllama(mod, await wllamaAssets());
+        let inInit = false;
+        const onLog = (text) => {
+          if (inInit && diag && text) diag.note(text);
+        };
+        const w = newWllama(mod, await wllamaAssets(runtime), onLog);
         try {
           const model = await step('download', {}, async () => {
             const saved = (await w.modelManager.getModels()).find((x) => x.url === pack.url);
@@ -182,15 +233,24 @@
             return w.modelManager.downloadModel({ url: pack.url }, { progressCallback: ({ loaded, total }) => onProgress && onProgress({ label: pack.id, loaded, total }) });
           });
           const blobs = await model.open();
-          await step('init', {}, () => w.loadModel(blobs, { n_gpu_layers: gpuLayers, n_ctx: nCtx, n_threads: 1 }));
-          await step('first', {}, () => w.createCompletion({ prompt: 'a', max_tokens: 1, temperature: 0 }));
+          await step('init', {}, async () => {
+            inInit = true;
+            if (diag) diag.note('実行用ファイルの準備（worker と wasm の読み込み）');
+            try {
+              await withTimeout(
+                w.loadModel(blobs, { n_gpu_layers: gpuLayers, n_ctx: nCtx, n_threads: 1 }),
+                initLimitMs,
+                `モデルの初期化が${Math.round(initLimitMs / 1000)}秒たっても終わりません（止まったと見なしました）`
+              );
+            } finally {
+              inInit = false;
+            }
+          });
+          await step('first', {}, () => withTimeout(w.createCompletion({ prompt: 'a', max_tokens: 1, temperature: 0 }), 60000, '最初の計算が60秒たっても終わりません'));
           wllama = w;
         } catch (error) {
-          try {
-            await w.exit();
-          } catch (_) {
-            /* 片付けの失敗は無視 */
-          }
+          killWorker(w);
+          await withTimeout(w.exit(), 3000, '').catch(() => {});
           throw error;
         }
       },
@@ -358,5 +418,5 @@
     return AI.llm.transformersGenerator(pack);
   }
 
-  AI.llm = { needCompat, wllamaAssets, available, PACKS: ALL, GGUF_PACKS, ONNX_PACKS: PACKS, TINY_PACK, ENGINES, ENGINE_ORDER, transformersGenerator, wllamaGenerator, createGenerator, loadWllama, ggufSaved, ggufRemove, vendorUrl };
+  AI.llm = { needCompat, isWebKit, runtimeOf, wllamaAssets, available, PACKS: ALL, GGUF_PACKS, ONNX_PACKS: PACKS, TINY_PACK, ENGINES, ENGINE_ORDER, transformersGenerator, wllamaGenerator, createGenerator, loadWllama, ggufSaved, ggufRemove, vendorUrl };
 })(typeof globalThis !== 'undefined' ? globalThis : window);
