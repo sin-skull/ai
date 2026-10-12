@@ -106,4 +106,17 @@
     await AI.rag.answer({ query: 'q', hits, generator: fakeGen('こたえ'), persona: {}, onToken: (t) => seen.push(t) });
     equal(seen[0], 'こたえ');
   });
+
+  test('rag.extractAnswer: 質問に近い文を抜き出す（モデル不要）', async () => {
+    const passage = { id: 1, title: '光合成', body: '光合成は植物が行う反応です。葉の葉緑体で光のエネルギーを使い、二酸化炭素と水から栄養を作ります。夜は止まります。' };
+    const r = await AI.rag.extractAnswer({ query: '植物は光から栄養をどう作る', hits: [{ passage }] });
+    ok(r.text.includes('葉緑体'));
+    equal(r.evidence[0].passage.id, 1);
+  });
+
+  test('rag.extractAnswer: 手がかりが無ければ null', async () => {
+    const passage = { id: 2, title: 'x', body: 'ねこはかわいい動物です。' };
+    equal(await AI.rag.extractAnswer({ query: 'zzzz', hits: [{ passage }] }), null);
+    equal(await AI.rag.extractAnswer({ query: 'q', hits: [] }), null);
+  });
 })();

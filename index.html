@@ -223,7 +223,8 @@
     #scrim { display: none !important; }
     #menu, #close { display: none; }
   }
-</style>
+    #where-note, #llm-note { font-size: 12px; opacity: .7; margin: 4px 0; }
+  </style>
 </head>
 <body>
 <div id="fatal" role="alert">
@@ -276,6 +277,8 @@
         <button id="import" type="button">読み込む</button>
       </div>
       <input id="import-file" type="file" accept=".json,application/json" hidden>
+      <div class="row"><button id="wipe" type="button">記憶を全て消す</button></div>
+      <p id="where-note">この端末のSafariと、ホーム画面に追加したアプリは、記憶を共有しません（iOSの仕様）。使う入口を1つに決めて、移すときは書き出す／読み込むを使ってください。</p>
       <p id="version"></p>
       <div class="row"><button id="update-btn" type="button">最新版を確認する</button></div>
       <details id="dsettings">
@@ -285,7 +288,13 @@
           <button id="semantic-btn" type="button">意味検索を有効にする</button>
           <button id="semantic-sync" type="button" hidden>未作成を作る</button>
         </div>
+        <div class="row"><button id="reset-all" type="button">初期状態に戻す（モデルも全て消す）</button></div>
         <p id="llm" style="margin-top:10px"></p>
+        <div id="llm-choice">
+          <label for="llm-pack">モデル</label>
+          <select id="llm-pack"></select>
+          <p id="llm-note"></p>
+        </div>
         <div class="row">
           <button id="llm-btn" type="button">回答モデルを有効にする</button>
         </div>
@@ -350,24 +359,24 @@
   </div>
 </div>
 
-<script src="js/normalize.js?v=0.10.1"></script>
-<script src="js/db.js?v=0.10.1"></script>
-<script src="js/terms.js?v=0.10.1"></script>
-<script src="js/chat.js?v=0.10.1"></script>
-<script src="js/wiki.js?v=0.10.1"></script>
-<script src="js/passages.js?v=0.10.1"></script>
-<script src="js/feedback.js?v=0.10.1"></script>
-<script src="js/net.js?v=0.10.1"></script>
-<script src="js/queue.js?v=0.10.1"></script>
-<script src="js/backup.js?v=0.10.1"></script>
-<script src="js/store.js?v=0.10.1"></script>
-<script src="js/embed.js?v=0.10.1"></script>
-<script src="js/llm.js?v=0.10.1"></script>
-<script src="js/rag.js?v=0.10.1"></script>
-<script src="js/growth.js?v=0.10.1"></script>
-<script src="js/sentiment.js?v=0.10.1"></script>
-<script src="js/vectors.js?v=0.10.1"></script>
-<script src="js/hybrid.js?v=0.10.1"></script>
-<script src="js/app.js?v=0.10.1"></script>
+<script src="js/normalize.js?v=0.10.2"></script>
+<script src="js/db.js?v=0.10.2"></script>
+<script src="js/terms.js?v=0.10.2"></script>
+<script src="js/chat.js?v=0.10.2"></script>
+<script src="js/wiki.js?v=0.10.2"></script>
+<script src="js/passages.js?v=0.10.2"></script>
+<script src="js/feedback.js?v=0.10.2"></script>
+<script src="js/net.js?v=0.10.2"></script>
+<script src="js/queue.js?v=0.10.2"></script>
+<script src="js/backup.js?v=0.10.2"></script>
+<script src="js/store.js?v=0.10.2"></script>
+<script src="js/embed.js?v=0.10.2"></script>
+<script src="js/llm.js?v=0.10.2"></script>
+<script src="js/rag.js?v=0.10.2"></script>
+<script src="js/growth.js?v=0.10.2"></script>
+<script src="js/sentiment.js?v=0.10.2"></script>
+<script src="js/vectors.js?v=0.10.2"></script>
+<script src="js/hybrid.js?v=0.10.2"></script>
+<script src="js/app.js?v=0.10.2"></script>
 </body>
 </html>

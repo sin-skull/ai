@@ -163,4 +163,26 @@
       await AI.backup.markExported(db, 12345);
       equal(await AI.backup.lastExportAt(db), 12345);
     }));
+
+  // ---- 一括削除 ----
+  test('backup.wipe: 覚えたものを全部消し、設定は残す', async () => {
+    await withDb(async (db) => {
+      await seed(db);
+      await AI.db.tx(db, 'settings', 'readwrite', (t) => AI.db.rq(t.objectStore('settings').put({ name: 'mode', value: 'offline' })));
+      const r = await AI.backup.wipe(db);
+      equal(r.terms, 1);
+      equal(r.passages, 1);
+      for (const st of ['terms', 'passages', 'ngram', 'vectors', 'feedback', 'queue']) equal((await all(db, st)).length, 0);
+      equal((await all(db, 'settings')).length, 2, 'settings');
+    });
+  });
+
+  test('backup.wipe: settings:true なら設定も消す', async () => {
+    await withDb(async (db) => {
+      await seed(db);
+      await AI.db.tx(db, 'settings', 'readwrite', (t) => AI.db.rq(t.objectStore('settings').put({ name: 'mode', value: 'offline' })));
+      await AI.backup.wipe(db, { settings: true });
+      equal((await all(db, 'settings')).length, 0);
+    });
+  });
 })();

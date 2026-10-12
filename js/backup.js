@@ -176,5 +176,16 @@
     });
   }
 
-  AI.backup = { FORMAT, validate, exportAll, importAll, markExported, lastExportAt };
+  // 覚えたものを全部消す（単語・文章・索引・ベクトル・評価・未回答）。設定（意味検索・回答モデル・重み・モード）は残す。
+  // options.settings: true なら設定も消す（初期状態に戻す）。戻り値: 消した件数 { terms, passages }
+  async function wipe(db, options = {}) {
+    const names = ['terms', 'passages', 'ngram', 'vectors', 'feedback', 'queue'].concat(options.settings ? ['settings'] : []);
+    return tx(db, names, 'readwrite', async (t) => {
+      const result = { terms: await rq(t.objectStore('terms').count()), passages: await rq(t.objectStore('passages').count()) };
+      for (const name of names) await rq(t.objectStore(name).clear());
+      return result;
+    });
+  }
+
+  AI.backup = { wipe, FORMAT, validate, exportAll, importAll, markExported, lastExportAt };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

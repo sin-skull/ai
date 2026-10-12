@@ -13,7 +13,19 @@
 
   // 容量は onnx ファイルの実サイズ（Hugging Face で確認した値）に設定ファイル等を足した目安。
   // 0.5B は Apache-2.0。重いモデルは iPhone のメモリで動かないので、ここでは小さいものだけを置く。
+  const HOSTS = ['huggingface.co（モデル）', 'cdn.jsdelivr.net（実行用ファイル）'];
   const PACKS = [
+    {
+      id: 'lfm2-350m',
+      label: '軽量（LFM2 350M）',
+      model: 'onnx-community/LFM2-350M-ONNX',
+      dtype: 'q4',
+      approxMB: 300,
+      version: 1,
+      license: 'LFM Open License v1.0（年間売上が一定額未満なら商用も可。配布前に条件を確認する）',
+      note: '日本語に対応した小型モデル。容量が小さく、iPhoneでも落ちにくい見込み（実機は未確認）',
+      hosts: HOSTS,
+    },
     {
       id: 'qwen2.5-0.5b',
       label: '標準（Qwen2.5 0.5B）',
@@ -22,7 +34,8 @@
       approxMB: 520,
       version: 1,
       license: 'Apache-2.0',
-      hosts: ['huggingface.co（モデル）', 'cdn.jsdelivr.net（実行用ファイル）'],
+      note: '日本語の力は軽量版より期待できるが、メモリを多く使う。端末によっては読み込み中に落ちる',
+      hosts: HOSTS,
     },
   ];
 

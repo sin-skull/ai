@@ -120,5 +120,45 @@
     return { text, unknown, evidence: context.map((c) => ({ passage: c.passage, n: c.n })), grounding: ground };
   }
 
-  AI.rag = { MAX_PASSAGES, MAX_EACH, MAX_TOTAL, PERSONAS, personaText, excerpt, pickContext, buildMessages, isUnknown, grounding, answer };
+  // モデルを使わずに答える：一番近い文章の中から、質問に一番近い文を抜き出す。
+  // provider があれば意味の近さで、無ければ2文字の並びの一致で選ぶ。端末が回答モデルを動かせなくても使える
+  function splitSentences(body) {
+    const parts = String(body || '').match(/[^。！？!?\n]+[。！？!?]?/g) || [];
+    return parts.map((x) => x.trim()).filter((x) => x.length >= 4);
+  }
+
+  async function extractAnswer({ query, hits, provider }) {
+    const top = hits && hits[0];
+    if (!top) return null;
+    const sentences = splitSentences(top.passage.body).slice(0, 40);
+    if (!sentences.length) return null;
+    let scores;
+    if (provider && provider.ready) {
+      const [q] = await provider.embed([query], 'query');
+      const vs = await provider.embed(sentences, 'passage');
+      scores = vs.map((v) => v.reduce((sum, x, i) => sum + x * q[i], 0));
+    } else {
+      const grams = new Set();
+      const nq = AI.normalizeTerm(query);
+      for (let i = 0; i + 1 < nq.length; i++) grams.add(nq.slice(i, i + 2));
+      scores = sentences.map((s) => {
+        const n = AI.normalizeTerm(s);
+        let hit = 0;
+        grams.forEach((g) => {
+          if (n.includes(g)) hit++;
+        });
+        return grams.size ? hit / grams.size : 0;
+      });
+    }
+    let best = 0;
+    scores.forEach((x, i) => {
+      if (x > scores[best]) best = i;
+    });
+    if (!(scores[best] > 0)) return null;
+    let text = sentences[best];
+    if (text.length < 15 && sentences[best + 1]) text += sentences[best + 1]; // 短すぎるときは次の文も
+    return { text, evidence: [{ n: 1, passage: top.passage }] };
+  }
+
+  AI.rag = { splitSentences, extractAnswer, MAX_PASSAGES, MAX_EACH, MAX_TOTAL, PERSONAS, personaText, excerpt, pickContext, buildMessages, isUnknown, grounding, answer };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

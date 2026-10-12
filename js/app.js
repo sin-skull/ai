@@ -56,6 +56,11 @@
     semSync: $('#semantic-sync'),
     llm: $('#llm'),
     llmBtn: $('#llm-btn'),
+    llmPack: $('#llm-pack'),
+    llmNote: $('#llm-note'),
+    llmChoice: $('#llm-choice'),
+    wipeBtn: $('#wipe'),
+    resetBtn: $('#reset-all'),
     tone: $('#tone'),
     persona: $('#persona'),
     personaCustom: $('#persona-custom'),
@@ -704,7 +709,31 @@
     if (row && row.value) {
       answerCfg = { ...answerCfg, ...row.value, persona: { ...answerCfg.persona, ...(row.value.persona || {}) } };
     }
+    // 前回、読み込みの途中でアプリが落ちていたら（目印が残っている）、回答モデルを自動でオフにする
+    const tried = await getSetting(TRY_KEY);
+    if (tried && tried.value) {
+      const wasPack = llmPackOf(tried.value.pack);
+      await putSetting(TRY_KEY, null);
+      answerCfg = { ...answerCfg, enabled: false };
+      await saveAnswerCfg();
+      const next = AI.llm.PACKS.find((p) => p.id !== wasPack.id);
+      addMessage('ai', `前回、回答モデル（${wasPack.label}）の${tried.value.stage || '読み込み'}中にアプリが落ちたようです。回答モデルはオフにしました。`, {
+        sub: `原因はまだ分かっていません（メモリ不足とは限りません）。保存した文章の検索と、文章の抜き出しはそのまま使えます。${next ? `\n別のモデル（${next.label}）を試すには、メニューの「設定と保存」で選んでから有効にしてください。` : ''}`,
+      });
+    }
     if (answerCfg.enabled) generator = AI.llm.transformersGenerator(llmPackOf(answerCfg.pack));
+  }
+
+  // 読み込み中の目印。最後まで終われば消す。落ちたら残るので、次の起動で気づける
+  const TRY_KEY = 'answer-try';
+  async function guarded(pack, work) {
+    const mark = (stage) => putSetting(TRY_KEY, { pack: pack.id, at: Date.now(), stage });
+    await mark('読み込み');
+    try {
+      return await work(mark);
+    } finally {
+      await putSetting(TRY_KEY, null);
+    }
   }
 
   const saveAnswerCfg = () => putSetting(ANSWER_KEY, answerCfg);
@@ -712,13 +741,26 @@
   async function ensureGenerator(onProgress) {
     if (!generator) return false;
     if (generator.ready) return true;
-    if (!generatorPreparing) generatorPreparing = generator.prepare(onProgress).finally(() => (generatorPreparing = null));
+    if (!generatorPreparing) {
+      generatorPreparing = guarded(llmPackOf(answerCfg.pack), () => generator.prepare(onProgress)).finally(() => (generatorPreparing = null));
+    }
     await generatorPreparing;
     return generator.ready;
   }
 
   function renderAnswer() {
     const pack = llmPackOf(answerCfg.pack);
+    el.llmChoice.hidden = answerCfg.enabled; // 使用中は変えられない（オフにしてから選ぶ）
+    if (!el.llmPack.options.length) {
+      for (const p of AI.llm.PACKS) {
+        const o = document.createElement('option');
+        o.value = p.id;
+        o.textContent = `${p.label} 約${p.approxMB}MB`;
+        el.llmPack.appendChild(o);
+      }
+    }
+    el.llmPack.value = pack.id;
+    el.llmNote.textContent = pack.note || '';
     if (!answerCfg.enabled) {
       el.llm.textContent = `回答モデル：オフ\n保存した文章を読んで、文章で答えます（約${pack.approxMB}MB・Wi-Fi推奨）`;
       el.llmBtn.textContent = '有効にする';
@@ -749,9 +791,12 @@
     const pm = progressMessage('準備しています…');
     const candidate = AI.llm.transformersGenerator(pack);
     try {
-      await candidate.prepare(downloadProgress(pm));
-      pm.set('動作を確かめています…');
-      await candidate.generate([{ role: 'user', content: 'こんにちは' }], { maxTokens: 4 }); // 実際に1回動かす
+      await guarded(pack, async (mark) => {
+        await candidate.prepare(downloadProgress(pm));
+        await mark('動作確認');
+        pm.set('動作を確かめています…');
+        await candidate.generate([{ role: 'user', content: 'こんにちは' }], { maxTokens: 4 }); // 実際に1回動かす
+      });
     } catch (error) {
       pm.remove();
       await candidate.unload();
@@ -806,6 +851,12 @@
       ],
     });
   }
+
+  el.llmPack.addEventListener('change', async () => {
+    answerCfg = { ...answerCfg, pack: el.llmPack.value };
+    await saveAnswerCfg();
+    renderAnswer();
+  });
 
   el.llmBtn.addEventListener('click', () => (answerCfg.enabled ? disableAnswer() : enableAnswer()));
 
@@ -1055,7 +1106,9 @@
     }
     if (hits.length) {
       if (answerCfg.enabled && generator && (await answerWithModel(query, hits))) return;
-      addMessage('ai', hits.map((h, i) => `${i + 1}. ${h.passage.title}${h.via && !h.via.includes('keyword') ? '〔意味が近い〕' : ''}\n   ${h.snippet}`).join('\n'), {
+      const picked = await AI.rag.extractAnswer({ query, hits }).catch(() => null);
+      const lead = picked ? `〔抜き出し〕${picked.text}\n（「${hits[0].passage.title}」より。文章から文を抜き出しただけで、答えとは限りません）\n\n` : '';
+      addMessage('ai', lead + hits.map((h, i) => `${i + 1}. ${h.passage.title}${h.via && !h.via.includes('keyword') ? '〔意味が近い〕' : ''}\n   ${h.snippet}`).join('\n'), {
         title: `保存した文章に ${hits.length} 件あります`,
         sub: '押すと全文を表示します。',
         actions: hits.map((h) => ({ label: h.passage.title, run: async () => showPassage(h.passage) })),
@@ -1417,6 +1470,73 @@
     } catch (error) {
       addMessage('ai', `書き出せませんでした。\n${error.message}`);
     }
+  });
+
+  // ---- 一括で消す ----
+  el.wipeBtn.addEventListener('click', async () => {
+    await dbReady;
+    if (!db) return;
+    setDrawer(false);
+    const n = await AI.db.tx(db, ['terms', 'passages'], 'readonly', async (t) => ({
+      terms: await AI.db.rq(t.objectStore('terms').count()),
+      passages: await AI.db.rq(t.objectStore('passages').count()),
+    }));
+    addMessage('ai', `覚えたこと（単語 ${n.terms} 件、文章 ${n.passages} 件）を全て消しますか？`, {
+      sub: '評価や未回答も消えます。元には戻せません。先に書き出しておくと、あとで読み込めます。設定とダウンロード済みのモデルは残ります。',
+      actions: [
+        { label: '先に書き出す', main: true, run: async () => el.exportBtn.click() },
+        {
+          label: '消す',
+          run: async () => {
+            addMessage('ai', '本当に全て消します。よろしいですか？', {
+              actions: [
+                {
+                  label: 'はい、全て消す',
+                  run: async () => {
+                    await AI.backup.wipe(db);
+                    lastAnswer = null;
+                    await render();
+                    await renderFoot(false);
+                    addMessage('ai', '覚えたことを全て消しました。');
+                  },
+                },
+                { label: 'やめる', main: true, run: async () => {} },
+              ],
+            });
+          },
+        },
+        { label: 'やめる', run: async () => {} },
+      ],
+    });
+  });
+
+  el.resetBtn.addEventListener('click', async () => {
+    await dbReady;
+    if (!db) return;
+    setDrawer(false);
+    addMessage('ai', 'アプリをこの端末で初期状態に戻しますか？', {
+      sub: '覚えたこと、設定、ダウンロード済みのモデルと実行用ファイルを全て消します。元には戻せません。先に書き出しておくと安心です。',
+      actions: [
+        { label: '先に書き出す', main: true, run: async () => el.exportBtn.click() },
+        {
+          label: '全て消して初期状態に戻す',
+          run: async () => {
+            try {
+              if (generator) await generator.unload();
+              await AI.backup.wipe(db, { settings: true });
+              for (const pack of AI.llm.PACKS) await AI.store.removeModel(pack.model).catch(() => {});
+              for (const pack of AI.embed.PACKS) await AI.store.removeModel(pack.model).catch(() => {});
+              await AI.store.removeLibrary().catch(() => {});
+            } catch (error) {
+              addMessage('ai', `消しきれませんでした。\n${error.message}`);
+              return;
+            }
+            location.reload();
+          },
+        },
+        { label: 'やめる', run: async () => {} },
+      ],
+    });
   });
 
   el.importBtn.addEventListener('click', () => el.importFile.click());
