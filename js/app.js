@@ -7,7 +7,7 @@
   // 古いファイルが混ざっていないか（キャッシュのずれ）。足りない部品があれば理由を出して止める
   const REQUIRED = ['#app', '#thread', '#messages', '#composer', '#input', '#send', '#drawer',
     '#scrim', '#menu', '#close', '#reset', '#search', '#count', '#terms', '#empty', '#tab-terms', '#tab-passages',
-    '#tab-queue', '#semantic', '#semantic-btn', '#semantic-sync', '#mode', '#llm', '#llm-btn', '#persona', '#persona-custom', '#tone', '#dl-list', '#storage', '#backup-info', '#export', '#import', '#import-file'];
+    '#tab-queue', '#semantic', '#semantic-btn', '#semantic-sync', '#mode', '#tab-tidy', '#w-score', '#w-importance', '#w-fresh', '#w-reset', '#llm', '#llm-btn', '#persona', '#persona-custom', '#tone', '#dl-list', '#storage', '#backup-info', '#export', '#import', '#import-file'];
   const missing = REQUIRED.filter((s) => !$(s));
   if (missing.length) {
     window.__showFatal &&
@@ -36,6 +36,11 @@
     tabTerms: $('#tab-terms'),
     tabPassages: $('#tab-passages'),
     tabQueue: $('#tab-queue'),
+    tabTidy: $('#tab-tidy'),
+    wScore: $('#w-score'),
+    wImportance: $('#w-importance'),
+    wFresh: $('#w-fresh'),
+    wReset: $('#w-reset'),
     mode: $('#mode'),
     semantic: $('#semantic'),
     semBtn: $('#semantic-btn'),
@@ -195,6 +200,8 @@
       await AI.net.load(db); // 前回のモードを引き継ぐ
       await loadSemantic(); // 意味検索の設定を引き継ぐ
       await loadAnswer(); // 回答モデルの設定を引き継ぐ
+      weights = await AI.growth.loadWeights(db); // 並び順の重み
+      renderWeights();
       await render();
       await renderFoot(true);
     })
@@ -457,6 +464,11 @@
 
   // 保存した文章を探す。意味検索がオンならキーワードと合わせる。使えないときはキーワードだけ
   async function searchPassages(query, limit = 5) {
+    // 検索で「関係あり」と判定された結果を、評価・ピン・新しさで並べ替える（関係ない文章は上がってこない）
+    return AI.growth.rerank(await searchRaw(query, limit), weights);
+  }
+
+  async function searchRaw(query, limit) {
     if (!(semantic.enabled && provider)) return AI.passages.search(db, query, { limit });
     let note = null;
     try {
@@ -807,7 +819,7 @@
       }
       msg.remove();
 
-      const evidenceActions = result.evidence.map((e) => ({ label: `[${e.n}] ${e.passage.title}`, run: async () => showPassage(e.passage) }));
+      const evidenceActions = result.evidence.map((e) => ({ label: `[${e.n}] ${e.passage.title}`, run: async () => showPassage(e.passage, false) }));
       if (result.unknown) {
         await notKnown(query, {
           lead: `保存した文章には、「${query}」の答えが見つかりませんでした。`,
@@ -815,6 +827,8 @@
         });
         return true;
       }
+      AI.growth.markUsed(db, 'passage', result.evidence.map((e) => e.passage.id)).catch(() => {}); // 根拠に使われた
+      lastAnswer = { targets: [{ type: 'passage', id: result.evidence[0].passage.id, label: result.evidence[0].passage.title }] };
       const warn = result.grounding < 0.5 ? '⚠ 保存した文章に無い言葉が多く含まれています。根拠を確かめてください。\n' : '';
       addMessage('ai', result.text, {
         sub: `${warn}根拠：${result.evidence.map((e) => `[${e.n}] ${e.passage.title}`).join('、')}\n小さなモデルが保存した文章から作った答えです。間違うことがあるので、根拠を押して確かめ、👍/👎を付けてください。`,
@@ -917,20 +931,78 @@
     }
   }
 
+  // ---- 育ち：評価・ピン・使われた回数・言葉からの評価 ----
+  let weights = { ...AI.growth.DEFAULT_WEIGHTS };
+  let lastAnswer = null; // 直前の答えの対象。次の発言が「ありがとう」などのときだけ使う
+
+  const nameOf = (kind) => (kind === 'term' ? '単語' : '文章');
+
+  async function togglePin(kind, record) {
+    const key = kind === 'term' ? record.key : record.id;
+    const now = (record.importance || 0) > 0 ? 0 : 1;
+    await AI.growth.setImportance(db, kind, key, now);
+    record.importance = now;
+    addMessage('ai', now ? `「${kind === 'term' ? record.term : record.title}」をピン留めしました。` : 'ピン留めを外しました。', {
+      sub: now ? '検索で少し上に出ます。整理の候補にも出しません。' : '',
+    });
+    await render();
+  }
+  const pinAction = (kind, record) => ({
+    label: (record.importance || 0) > 0 ? '📌 ピンを外す' : '📌 ピン留め',
+    run: () => togglePin(kind, record),
+  });
+
+  // 言葉（ありがとう／違う）から評価する。明示の👍/👎を優先し、取り消せるようにする
+  async function applySentiment(sent, target) {
+    const t = target.targets[0]; // 答えの主な根拠だけを評価する
+    const cur = await AI.feedback.current(db, t.type, t.id);
+    if (cur !== 0) {
+      addMessage('ai', sent.value > 0 ? 'はい。' : `「${t.label}」にはすでに${cur > 0 ? '👍' : '👎'}が付いているので、そのままにしました。`, {
+        sub: sent.value > 0 ? '' : '変えるときは👍/👎のボタンで。',
+      });
+      return;
+    }
+    await AI.feedback.setValue(db, t.type, t.id, sent.value, { via: 'words' });
+    await render();
+    addMessage('ai', `評価を変更しました：「${t.label}」を${sent.value > 0 ? '👍' : '👎'}に。`, {
+      sub: `「${sent.word}」という言葉からの自動の判断です。違っていたら取り消せます。`,
+      actions: [
+        {
+          label: '取り消す',
+          run: async () => {
+            await AI.feedback.setValue(db, t.type, t.id, 0, { via: 'undo' });
+            await render();
+            addMessage('ai', '評価を元に戻しました。');
+          },
+        },
+      ],
+    });
+  }
+
   // ---- 聞く ----
-  function showPassage(p) {
-    addMessage('ai', p.body, { rate: { type: 'passage', id: p.id }, title: p.title, sub: `保存 ${formatDate(p.fetchedAt)}${p.sourceUrl ? `\n${p.sourceUrl}` : ''}${p.license ? `（${p.license}）` : ''}` });
+  // 文章を開く。countUse: 使われた回数に数える（回答の根拠から開いたときは、回答のときに数え済みなので数えない）
+  function showPassage(p, countUse = true) {
+    if (countUse) AI.growth.markUsed(db, 'passage', p.id).catch(() => {});
+    lastAnswer = { targets: [{ type: 'passage', id: p.id, label: p.title }] };
+    addMessage('ai', p.body, {
+      rate: { type: 'passage', id: p.id },
+      title: p.title,
+      sub: `保存 ${formatDate(p.fetchedAt)}${p.sourceUrl ? `\n${p.sourceUrl}` : ''}${p.license ? `（${p.license}）` : ''}`,
+      actions: [pinAction('passage', p)],
+    });
   }
 
   async function ask(query) {
     const record = await AI.terms.get(db, query);
     const hits = await searchPassages(query);
     if (record) {
+      AI.growth.markUsed(db, 'term', record.key).catch(() => {});
+      lastAnswer = { targets: [{ type: 'term', id: record.key, label: record.term }] };
       addMessage('ai', record.definition || '（定義はまだありません）', {
         title: record.term,
         rate: { type: 'term', id: record.key },
         sub: `更新 ${formatDate(record.updatedAt)}${hits.length ? `\n保存した文章にも ${hits.length} 件あります。` : ''}`,
-        actions: hits.map((h) => ({ label: h.passage.title, run: async () => showPassage(h.passage) })),
+        actions: hits.map((h) => ({ label: h.passage.title, run: async () => showPassage(h.passage) })).concat([pinAction('term', record)]),
       });
       return;
     }
@@ -986,6 +1058,10 @@
     addMessage('user', text);
     await dbReady;
     if (!db) return; // 開けなかった理由は、すでに画面に出している
+    const previous = lastAnswer;
+    lastAnswer = null; // 言葉での評価は、答えの直後の1回だけ
+    const sent = AI.sentiment.detect(text);
+    if (sent.value && previous) return applySentiment(sent, previous);
     const parsed = AI.chat.parse(text);
     if (parsed.type === 'teach') {
       if (!parsed.confirm) return save(parsed, 'ask');
@@ -1061,6 +1137,16 @@
     el.input.focus();
   });
 
+  // 一覧に出す印：ピン・評価・使われた回数
+  function marks(r) {
+    const m = [];
+    if ((r.importance || 0) > 0) m.push('📌');
+    if ((r.score || 0) > 0) m.push('👍');
+    if ((r.score || 0) < 0) m.push('👎');
+    if (r.useCount > 0) m.push(`使用${r.useCount}回`);
+    return m.length ? ` ・ ${m.join(' ')}` : '';
+  }
+
   // ---- 記憶の一覧 ----
   async function renderTerms() {
     if (!db) return;
@@ -1086,7 +1172,7 @@
       meta.className = 'meta';
       const others = r.variants.filter((v) => v !== r.term);
       const from = r.sources.length ? ` ・ 出典 ${r.sources[0].title || r.sources[0].url}` : '';
-      meta.textContent = `更新 ${formatDate(r.updatedAt)}${others.length ? ` ・ ${others.join('、')}` : ''}${from}`;
+      meta.textContent = `更新 ${formatDate(r.updatedAt)}${others.length ? ` ・ ${others.join('、')}` : ''}${from}${marks(r)}`;
 
       // 消すときは2回押す（スマホの押し間違い対策）
       const del = document.createElement('button');
@@ -1143,7 +1229,7 @@
 
       const meta = document.createElement('span');
       meta.className = 'meta';
-      meta.textContent = `保存 ${formatDate(p.fetchedAt)} ・ ${p.body.length}文字${p.sourceUrl ? ` ・ ${p.sourceUrl}` : ''}${p.license ? ` ・ ${p.license}` : ''}`;
+      meta.textContent = `保存 ${formatDate(p.fetchedAt)} ・ ${p.body.length}文字${p.sourceUrl ? ` ・ ${p.sourceUrl}` : ''}${p.license ? ` ・ ${p.license}` : ''}${marks(p)}`;
 
       const del = document.createElement('button');
       del.type = 'button';
@@ -1383,15 +1469,224 @@
     el.count.textContent = `${items.length} 件`;
   }
 
+  // ---- 並び順の重み（設定）----
+  const WEIGHT_UI = [
+    ['score', el.wScore, '評価（👍/👎）'],
+    ['importance', el.wImportance, 'ピン留め'],
+    ['fresh', el.wFresh, '新しさ'],
+  ];
+  function renderWeights() {
+    for (const [key, input, label] of WEIGHT_UI) {
+      input.value = String(Math.round(weights[key] * 100));
+      input.setAttribute('aria-label', label);
+      input.parentElement.querySelector('output').textContent = `${Math.round(weights[key] * 100)}%`;
+    }
+  }
+  for (const [key, input] of WEIGHT_UI) {
+    input.addEventListener('input', () => {
+      input.parentElement.querySelector('output').textContent = `${input.value}%`;
+    });
+    input.addEventListener('change', async () => {
+      weights = await AI.growth.saveWeights(db, { ...weights, [key]: Number(input.value) / 100 });
+      renderWeights();
+    });
+  }
+  el.wReset.addEventListener('click', async () => {
+    weights = await AI.growth.saveWeights(db, AI.growth.DEFAULT_WEIGHTS);
+    renderWeights();
+  });
+
+  // ---- 整理と育ち（「整理」タブ）----
+  const SVG = 'http://www.w3.org/2000/svg';
+  // 手で描いたような、少し歪んだ長方形の線。同じ入力なら同じ形になる
+  function wobblyRect(x, y, w, h, seed) {
+    const j = (k) => Math.sin(seed * 12.9898 + k * 78.233) * 1.6;
+    const pts = [[x + j(1), y + j(2)], [x + w + j(3), y + j(4)], [x + w + j(5), y + h + j(6)], [x + j(7), y + h + j(8)]];
+    return `M${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)} L${pts[1][0].toFixed(1)} ${pts[1][1].toFixed(1)} L${pts[2][0].toFixed(1)} ${pts[2][1].toFixed(1)} L${pts[3][0].toFixed(1)} ${pts[3][1].toFixed(1)} Z`;
+  }
+
+  function growthChart(points) {
+    const W = 300, H = 120, base = 100, top = 16;
+    const max = Math.max(1, ...points.map((p) => p.total));
+    const svg = document.createElementNS(SVG, 'svg');
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.setAttribute('role', 'img');
+    svg.setAttribute('aria-label', `蓄積数の推移。いま ${points[points.length - 1].total} 件`);
+    svg.classList.add('chart');
+    const slot = W / points.length;
+    points.forEach((pt, i) => {
+      const h = Math.max(2, ((base - top) * pt.total) / max);
+      const x = i * slot + slot * 0.2;
+      const w = slot * 0.6;
+      const y = base - h;
+      const path = document.createElementNS(SVG, 'path');
+      path.setAttribute('d', wobblyRect(x, y, w, h, i + 1));
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', 'currentColor');
+      path.setAttribute('stroke-width', '1.4');
+      path.setAttribute('stroke-linejoin', 'round');
+      svg.appendChild(path);
+      // 斜線で塗る（鉛筆風）
+      for (let k = 6; k < h; k += 6) {
+        const line = document.createElementNS(SVG, 'path');
+        line.setAttribute('d', `M${(x + 1).toFixed(1)} ${(y + k).toFixed(1)} L${(x + w - 1).toFixed(1)} ${(y + k - 5).toFixed(1)}`);
+        line.setAttribute('stroke', 'currentColor');
+        line.setAttribute('stroke-width', '0.7');
+        line.setAttribute('opacity', '0.45');
+        svg.appendChild(line);
+      }
+      const label = document.createElementNS(SVG, 'text');
+      label.setAttribute('x', (x + w / 2).toFixed(1));
+      label.setAttribute('y', String(H - 4));
+      label.setAttribute('text-anchor', 'middle');
+      label.setAttribute('font-size', '9');
+      label.setAttribute('fill', 'currentColor');
+      label.textContent = i === points.length - 1 ? '今' : `${points.length - 1 - i}週前`;
+      svg.appendChild(label);
+      if (i === points.length - 1 || i === 0) {
+        const n = document.createElementNS(SVG, 'text');
+        n.setAttribute('x', (x + w / 2).toFixed(1));
+        n.setAttribute('y', (y - 4).toFixed(1));
+        n.setAttribute('text-anchor', 'middle');
+        n.setAttribute('font-size', '10');
+        n.setAttribute('fill', 'currentColor');
+        n.textContent = String(pt.total);
+        svg.appendChild(n);
+      }
+    });
+    return svg;
+  }
+
+  function wikiTitleOf(p) {
+    try {
+      const last = new URL(p.sourceUrl).pathname.split('/').pop();
+      return decodeURIComponent(last).replace(/_/g, ' ') || p.title;
+    } catch (_) {
+      return p.title;
+    }
+  }
+
+  // 古い文章を Wikipedia から取り直す（押したときだけ。記事名が Wikipedia に送られる）
+  async function refetchPassage(c) {
+    const p = await AI.passages.get(db, c.id);
+    if (!p) return;
+    const found = await AI.wiki.byTitle(wikiTitleOf(p));
+    if (!found) {
+      addMessage('ai', `Wikipediaで「${p.title}」が見つかりませんでした。今の文章はそのままにしました。`);
+      return;
+    }
+    const same = AI.normalizeTerm(found.extract) === AI.normalizeTerm(p.body);
+    const updated = await AI.passages.replaceBody(db, p.id, found.extract);
+    addMessage('ai', same ? `「${p.title}」は内容が変わっていませんでした（保存日だけ新しくしました）。` : `「${p.title}」を最新の内容に入れ替えました。`, {
+      sub: '評価・ピン・使われた回数は引き継いでいます。',
+    });
+    indexInBackground(updated); // 意味検索がオンなら、ベクトルも作り直す
+    await render();
+  }
+
+  async function renderTidy() {
+    const [terms, passages, queueCount] = await Promise.all([AI.terms.list(db), AI.passages.list(db), AI.queue.count(db)]);
+    const sum = AI.growth.summary(terms, passages, queueCount);
+    const list = AI.growth.candidates(terms, passages);
+    el.list.textContent = '';
+
+    // 育ち
+    const grow = document.createElement('li');
+    grow.className = 'grow';
+    const head = document.createElement('span');
+    head.className = 'term';
+    head.textContent = '育ち';
+    const stats = document.createElement('p');
+    stats.className = 'def';
+    stats.textContent =
+      `単語 ${sum.terms} ・ 文章 ${sum.passages} ・ 未回答 ${sum.queue}\n👍 ${sum.liked} ・ 👎 ${sum.disliked} ・ 📌 ${sum.pinned}` +
+      (sum.used.length ? `\nよく使われた：${sum.used.map((u) => `${u.title}（${u.useCount}回）`).join('、')}` : '\nまだ回答に使われた知識はありません。');
+    grow.append(head, document.createElement('span'), stats, growthChart(sum.points));
+    el.list.appendChild(grow);
+
+    // 整理の候補
+    const h2 = document.createElement('li');
+    h2.className = 'sect';
+    h2.textContent = list.length ? `整理の候補 ${list.length} 件（低評価・未使用・古い順）` : '整理の候補はありません。';
+    el.list.appendChild(h2);
+
+    for (const c of list) {
+      const li = document.createElement('li');
+      const title = document.createElement('span');
+      title.className = 'term';
+      title.textContent = `${c.title}`;
+      const reasons = document.createElement('p');
+      reasons.className = 'def';
+      reasons.textContent = c.reasons.map((r) => r.text).join('\n');
+      const meta = document.createElement('span');
+      meta.className = 'meta';
+      meta.textContent = nameOf(c.kind);
+
+      const del = document.createElement('button');
+      del.type = 'button';
+      del.className = 'del';
+      del.textContent = '消す';
+      del.setAttribute('aria-label', `${c.title} を消す`);
+      let timer = null;
+      del.addEventListener('click', async () => {
+        if (!del.classList.contains('armed')) {
+          del.classList.add('armed');
+          del.textContent = 'もう一度';
+          timer = setTimeout(() => {
+            del.classList.remove('armed');
+            del.textContent = '消す';
+          }, 3000);
+          return;
+        }
+        clearTimeout(timer);
+        if (c.kind === 'term') await AI.terms.remove(db, c.id);
+        else await AI.passages.remove(db, c.id);
+        await render();
+      });
+
+      const row = document.createElement('div');
+      row.className = 'tidy-actions';
+      const keep = document.createElement('button');
+      keep.type = 'button';
+      keep.textContent = '📌 残す';
+      keep.addEventListener('click', async () => {
+        await AI.growth.setImportance(db, c.kind, c.id, 1);
+        await render();
+      });
+      row.appendChild(keep);
+      if (c.refetch) {
+        const re = document.createElement('button');
+        re.type = 'button';
+        re.textContent = AI.net.isOffline() ? '再取得（オンライン時）' : 'Wikipediaで再取得';
+        re.disabled = AI.net.isOffline();
+        re.title = '押すと、記事名がWikipediaに送られます';
+        re.addEventListener('click', async () => {
+          re.disabled = true;
+          try {
+            await refetchPassage(c);
+          } catch (error) {
+            addMessage('ai', `再取得できませんでした。\n${error.message}`);
+            re.disabled = false;
+          }
+        });
+        row.appendChild(re);
+      }
+      li.append(title, del, reasons, meta, row);
+      el.list.appendChild(li);
+    }
+    el.empty.hidden = true;
+    el.count.textContent = `${terms.length + passages.length} 件の知識`;
+  }
+
   // ---- タブ ----
   let tab = 'terms';
-  const TABS = { terms: el.tabTerms, passages: el.tabPassages, queue: el.tabQueue };
-  const PLACEHOLDER = { terms: '記憶を探す', passages: '文章を探す', queue: '' };
+  const TABS = { terms: el.tabTerms, passages: el.tabPassages, queue: el.tabQueue, tidy: el.tabTidy };
+  const PLACEHOLDER = { terms: '記憶を探す', passages: '文章を探す', queue: '', tidy: '' };
   function setTab(next) {
     tab = next;
     for (const [name, button] of Object.entries(TABS)) button.setAttribute('aria-selected', String(tab === name));
     el.search.placeholder = PLACEHOLDER[tab];
-    el.search.hidden = tab === 'queue'; // 未回答は件数が少ないので、検索欄は出さない
+    el.search.hidden = tab === 'queue' || tab === 'tidy'; // 未回答・整理は検索欄を出さない
     el.search.value = '';
     return render();
   }
@@ -1404,12 +1699,14 @@
     if (!db) return;
     if (tab === 'terms') await renderTerms();
     else if (tab === 'passages') await renderPassages();
+    else if (tab === 'tidy') await renderTidy();
     else await renderQueue();
     await updateBadge();
   }
   el.tabTerms.addEventListener('click', () => setTab('terms'));
   el.tabPassages.addEventListener('click', () => setTab('passages'));
   el.tabQueue.addEventListener('click', () => setTab('queue'));
+  el.tabTidy.addEventListener('click', () => setTab('tidy'));
   el.search.addEventListener('input', render);
 
   fitInput();

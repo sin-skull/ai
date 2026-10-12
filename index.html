@@ -64,7 +64,7 @@
   #mode::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #5a9a5f; }
   #mode[data-mode="offline"] { color: var(--ink); border-color: var(--ink); }
   #mode[data-mode="offline"]::before { background: var(--accent); }
-  #dfoot { border-top: 1px solid var(--line); padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); font-size: .8rem; color: var(--sub); max-height: 52vh; max-height: 52dvh; overflow-y: auto; overscroll-behavior: contain; }
+  #dfoot { border-top: 1px solid var(--line); padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); font-size: .8rem; color: var(--sub); max-height: 60vh; max-height: 60dvh; overflow-y: auto; overscroll-behavior: contain; }
   #dfoot p { margin: 0 0 6px; overflow-wrap: anywhere; white-space: pre-line; }
   #dfoot .warn { color: var(--danger); }
   #dfoot .row { display: flex; gap: 8px; margin-top: 8px; }
@@ -78,7 +78,18 @@
     min-height: 44px; border: 1px solid var(--line); border-radius: 12px; background: none; color: var(--ink);
     font: inherit; font-size: .9rem; padding: 0 12px; width: 100%;
   }
-  #downloads { margin-top: 10px; }
+  #dsettings > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; margin-top: 4px; }
+  #downloads, #weights { margin-top: 10px; }
+  #weights summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
+  #weights label.w { display: grid; grid-template-columns: 7.5em 1fr 3em; gap: 8px; align-items: center; min-height: 44px; }
+  #weights input[type="range"] { width: 100%; min-height: 44px; }
+  #weights output { text-align: right; }
+  #terms li.grow { display: block; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+  #terms li.grow .def { margin: 4px 0 8px; }
+  #terms .chart { width: 100%; height: auto; color: var(--ink); }
+  #terms li.sect { display: block; color: var(--sub); font-size: .85rem; padding: 6px 8px; }
+  #terms .tidy-actions { grid-column: 1 / -1; display: flex; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+  #terms .tidy-actions button { min-height: 44px; padding: 6px 14px; background: none; border: 1px solid var(--line); border-radius: 12px; color: var(--ink); }
   #downloads summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; }
   .dl { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 6px 0; border-top: 1px solid var(--line); }
   .dl span { white-space: pre-line; overflow-wrap: anywhere; }
@@ -251,37 +262,49 @@
       <button type="button" role="tab" id="tab-terms" aria-selected="true">単語</button>
       <button type="button" role="tab" id="tab-passages" aria-selected="false">文章</button>
       <button type="button" role="tab" id="tab-queue" aria-selected="false">未回答</button>
+      <button type="button" role="tab" id="tab-tidy" aria-selected="false">整理</button>
     </div>
     <div class="dtools"><input id="search" type="search" placeholder="記憶を探す" aria-label="記憶を探す"></div>
     <div id="count"></div>
     <ul id="terms"></ul>
     <p id="empty" hidden></p>
     <div id="dfoot">
-      <p id="semantic"></p>
-      <div class="row">
-        <button id="semantic-btn" type="button">意味検索を有効にする</button>
-        <button id="semantic-sync" type="button" hidden>未作成を作る</button>
-      </div>
-      <p id="llm" style="margin-top:10px"></p>
-      <div class="row">
-        <button id="llm-btn" type="button">回答モデルを有効にする</button>
-      </div>
-      <div id="tone" hidden>
-        <label for="persona">口調</label>
-        <select id="persona"></select>
-        <input id="persona-custom" type="text" maxlength="80" placeholder="例：関西弁で、少し元気に" hidden>
-      </div>
-      <details id="downloads">
-        <summary>端末に保存したもの</summary>
-        <div id="dl-list"></div>
-      </details>
-      <p id="storage" style="margin-top:10px"></p>
       <p id="backup-info"></p>
       <div class="row">
         <button id="export" type="button">書き出す</button>
         <button id="import" type="button">読み込む</button>
       </div>
       <input id="import-file" type="file" accept=".json,application/json" hidden>
+      <details id="dsettings">
+        <summary>設定と保存</summary>
+        <p id="semantic"></p>
+        <div class="row">
+          <button id="semantic-btn" type="button">意味検索を有効にする</button>
+          <button id="semantic-sync" type="button" hidden>未作成を作る</button>
+        </div>
+        <p id="llm" style="margin-top:10px"></p>
+        <div class="row">
+          <button id="llm-btn" type="button">回答モデルを有効にする</button>
+        </div>
+        <div id="tone" hidden>
+          <label for="persona">口調</label>
+          <select id="persona"></select>
+          <input id="persona-custom" type="text" maxlength="80" placeholder="例：関西弁で、少し元気に" hidden>
+        </div>
+        <details id="weights">
+          <summary>並び順の重み</summary>
+          <p>検索で見つかった文章の並びに、どれだけ反映するか。0%で無効です。</p>
+          <label class="w">評価（👍/👎）<input id="w-score" type="range" min="0" max="50" step="5"><output></output></label>
+          <label class="w">ピン留め<input id="w-importance" type="range" min="0" max="50" step="5"><output></output></label>
+          <label class="w">新しさ<input id="w-fresh" type="range" min="0" max="30" step="5"><output></output></label>
+          <button id="w-reset" type="button">初期値に戻す</button>
+        </details>
+        <details id="downloads">
+          <summary>端末に保存したもの</summary>
+          <div id="dl-list"></div>
+        </details>
+        <p id="storage" style="margin-top:10px"></p>
+      </details>
     </div>
   </aside>
   <div id="scrim"></div>
@@ -323,22 +346,24 @@
   </div>
 </div>
 
-<script src="js/normalize.js?v=0.9.0"></script>
-<script src="js/db.js?v=0.9.0"></script>
-<script src="js/terms.js?v=0.9.0"></script>
-<script src="js/chat.js?v=0.9.0"></script>
-<script src="js/wiki.js?v=0.9.0"></script>
-<script src="js/passages.js?v=0.9.0"></script>
-<script src="js/feedback.js?v=0.9.0"></script>
-<script src="js/net.js?v=0.9.0"></script>
-<script src="js/queue.js?v=0.9.0"></script>
-<script src="js/backup.js?v=0.9.0"></script>
-<script src="js/store.js?v=0.9.0"></script>
-<script src="js/embed.js?v=0.9.0"></script>
-<script src="js/llm.js?v=0.9.0"></script>
-<script src="js/rag.js?v=0.9.0"></script>
-<script src="js/vectors.js?v=0.9.0"></script>
-<script src="js/hybrid.js?v=0.9.0"></script>
-<script src="js/app.js?v=0.9.0"></script>
+<script src="js/normalize.js?v=0.10.0"></script>
+<script src="js/db.js?v=0.10.0"></script>
+<script src="js/terms.js?v=0.10.0"></script>
+<script src="js/chat.js?v=0.10.0"></script>
+<script src="js/wiki.js?v=0.10.0"></script>
+<script src="js/passages.js?v=0.10.0"></script>
+<script src="js/feedback.js?v=0.10.0"></script>
+<script src="js/net.js?v=0.10.0"></script>
+<script src="js/queue.js?v=0.10.0"></script>
+<script src="js/backup.js?v=0.10.0"></script>
+<script src="js/store.js?v=0.10.0"></script>
+<script src="js/embed.js?v=0.10.0"></script>
+<script src="js/llm.js?v=0.10.0"></script>
+<script src="js/rag.js?v=0.10.0"></script>
+<script src="js/growth.js?v=0.10.0"></script>
+<script src="js/sentiment.js?v=0.10.0"></script>
+<script src="js/vectors.js?v=0.10.0"></script>
+<script src="js/hybrid.js?v=0.10.0"></script>
+<script src="js/app.js?v=0.10.0"></script>
 </body>
 </html>

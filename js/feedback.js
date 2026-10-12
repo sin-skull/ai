@@ -35,6 +35,22 @@
     });
   }
 
+  // 評価を指定の値（-1, 0, 1）にする。取り消し（元に戻す）に使う。ログには1行足す
+  async function setValue(db, targetType, targetId, value, options = {}) {
+    if (!STORE[targetType]) throw new Error(`未知の対象: ${targetType}`);
+    if (![-1, 0, 1].includes(value)) throw new Error('評価は -1, 0, 1 のどれかです');
+    const now = options.now ?? Date.now();
+    return tx(db, [STORE[targetType], 'feedback'], 'readwrite', async (t) => {
+      const target = t.objectStore(STORE[targetType]);
+      const record = await rq(target.get(targetId));
+      if (!record) throw new Error('評価する対象が見つかりません');
+      await rq(t.objectStore('feedback').add({ targetType, targetId, value, at: now, via: options.via || 'button' }));
+      record.score = value;
+      await rq(target.put(record));
+      return { value, score: record.score };
+    });
+  }
+
   async function current(db, targetType, targetId) {
     const logs = await tx(db, 'feedback', 'readonly', (t) =>
       rq(t.objectStore('feedback').index('target').getAll([targetType, targetId]))
@@ -48,5 +64,5 @@
     );
   }
 
-  AI.feedback = { rate, current, history };
+  AI.feedback = { rate, setValue, current, history };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

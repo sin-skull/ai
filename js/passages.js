@@ -202,5 +202,24 @@
     return fuzzy(db, query, limit);
   }
 
-  AI.passages = { grams, add, get, list, count, remove, search };
+  // 本文を差し替える（再取得用）。インデックスも同じトランザクションで更新し、評価・使用回数・ピンは引き継ぐ。
+  // ベクトルは古くなるので消す（意味検索がオンなら、呼び出し側で作り直す）
+  async function replaceBody(db, id, body, options = {}) {
+    const text = String(body ?? '').trim();
+    if (!text) throw new Error('文章が空です');
+    return tx(db, ['passages', 'ngram', 'vectors'], 'readwrite', async (t) => {
+      const store = t.objectStore('passages');
+      const record = await rq(store.get(id));
+      if (!record) throw new Error('文章が見つかりません');
+      await indexRemove(t.objectStore('ngram'), id, `${record.title}\n${record.body}`);
+      record.body = text;
+      record.fetchedAt = options.now ?? Date.now();
+      await rq(store.put(record));
+      await indexAdd(t.objectStore('ngram'), id, `${record.title}\n${record.body}`);
+      await rq(t.objectStore('vectors').delete(id));
+      return record;
+    });
+  }
+
+  AI.passages = { grams, add, get, list, count, remove, replaceBody, search };
 })(typeof globalThis !== 'undefined' ? globalThis : window);

@@ -53,5 +53,21 @@
       .filter((p) => p.extract);
   }
 
-  AI.wiki = { ENDPOINT, shorten, search };
+  // 記事名を指定して、最新の冒頭を取る（保存した文章の再取得用）。無ければ null
+  async function byTitle(title, options = {}) {
+    const t = String(title ?? '').trim();
+    if (!t) return null;
+    const params = new URLSearchParams({
+      action: 'query', format: 'json', origin: '*', titles: t,
+      prop: 'extracts|info', exintro: '1', explaintext: '1', inprop: 'url', redirects: '1',
+    });
+    const response = await AI.net.fetch(`${ENDPOINT}?${params}`, { signal: options.signal }, options.fetchImpl);
+    if (!response.ok) throw new Error(`Wikipediaに繋がりませんでした（${response.status}）`);
+    const data = await response.json();
+    const pages = data && data.query && data.query.pages ? Object.values(data.query.pages) : [];
+    const page = pages.find((p) => !p.missing && p.extract);
+    return page ? { title: page.title, url: page.fullurl, extract: shorten(page.extract) } : null;
+  }
+
+  AI.wiki = { ENDPOINT, shorten, search, byTitle };
 })(typeof globalThis !== 'undefined' ? globalThis : window);
