@@ -24,31 +24,29 @@
   section { border-top: 1px solid var(--line); padding: 14px 0; }
   h2 { font: 600 1rem var(--serif); letter-spacing: .04em; margin: 0 0 8px; }
   label { display: block; color: var(--sub); font-size: .9rem; margin: 8px 0 4px; }
-  select, textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 16px; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
-  textarea { min-height: 6rem; resize: vertical; }
+  label.check { display: flex; gap: 8px; align-items: center; color: var(--ink); }
+  select { width: 100%; box-sizing: border-box; font: inherit; font-size: 16px; color: var(--ink); background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
   .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-  button { flex: 1; min-height: 44px; min-width: 7rem; font: inherit; color: var(--ink); background: none; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; }
+  button { flex: 1; min-height: 44px; min-width: 8rem; font: inherit; color: var(--ink); background: none; border: 1px solid var(--line); border-radius: 12px; cursor: pointer; }
   button.main { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
   button:disabled { opacity: .45; cursor: default; }
   .note { color: var(--sub); font-size: .85rem; margin: 6px 0 0; }
-  #env, #log { font: .8rem/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin: 0; }
-  #log { max-height: 16rem; overflow-y: auto; }
+  pre { font: .8rem/1.6 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin: 0; }
+  #log, #diag { max-height: 16rem; overflow-y: auto; }
   #out { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-height: 3rem; }
   #crash { display: none; border: 1px solid var(--danger); color: var(--danger); border-radius: 10px; padding: 10px 12px; margin-bottom: 12px; }
-  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 8px; }
-  .stats div { border: 1px solid var(--line); border-radius: 10px; padding: 6px 8px; }
-  .stats b { display: block; font: 600 1.1rem var(--serif); }
-  .stats span { color: var(--sub); font-size: .78rem; }
-  #history { margin: 0; padding-left: 1.2em; font-size: .85rem; }
-  #history li.ok { color: var(--ok); }
-  #history li.ng { color: var(--danger); }
+  #status { font: 600 1rem var(--serif); margin: 8px 0 0; }
+  table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+  th, td { border-bottom: 1px solid var(--line); padding: 4px 4px; text-align: left; vertical-align: top; }
+  td.ok { color: var(--ok); } td.ng { color: var(--danger); }
+  ol { margin: 0; padding-left: 1.3em; }
   a { color: var(--accent); }
 </style>
 </head>
 <body>
 <main>
   <h1>試験室</h1>
-  <p class="lead">回答モデルを、iPhoneで落ちずに動かせる方式を探すページです。アプリの記憶には触れません。ここで落ちても、アプリには影響しません。</p>
+  <p class="lead">回答モデルを iPhone で落ちずに動かせる、モデルと動かし方を探すページです。アプリの記憶には触れません（試験用の資料はこのページの中にあります）。ここで落ちても、アプリには影響しません。</p>
 
   <div id="crash"></div>
 
@@ -58,59 +56,61 @@
   </section>
 
   <section>
-    <h2>1. 選ぶ</h2>
+    <h2>条件</h2>
     <label for="model">モデル</label>
     <select id="model"></select>
     <label for="engine">動かし方</label>
-    <select id="engine">
-      <option value="cpu">CPUだけ（GPUを使わない・遅いが落ちにくい見込み）</option>
-      <option value="split">分担（一部の層だけGPU、残りはCPU）</option>
-      <option value="gpu">GPU（全部の層をGPU・速いが落ちやすいかも）</option>
-    </select>
-    <p class="note" id="engine-note"></p>
+    <select id="engine"></select>
+    <label class="check"><input id="swap" type="checkbox"> 検索モデル（意味検索）との入れ替えも試す（初回は約120MBのダウンロード）</label>
+    <p class="note" id="cond-note"></p>
   </section>
 
   <section>
-    <h2>2. 読み込む</h2>
+    <h2>試験（上から順に）</h2>
+    <ol class="note" style="margin-bottom:8px">
+      <li>読み込み：ダウンロード → 初期化 → 最初の計算</li>
+      <li>短い答え：資料なしで、短く3回答えさせる</li>
+      <li>検索と連携：保存した資料を探して、根拠付きで答える（5問）</li>
+      <li>長い資料：約1700字の資料を分けて読んで答える</li>
+      <li>連続10問：続きの質問を含めて、10問続けて答える</li>
+    </ol>
     <div class="row">
-      <button id="load" class="main" type="button">読み込む</button>
-      <button id="unload" type="button" disabled>外す</button>
-    </div>
-    <p class="note">初回はダウンロードします（Wi‑Fi推奨）。2回目からは端末に保存した分を使います。</p>
-  </section>
-
-  <section>
-    <h2>3. 答えさせる</h2>
-    <label for="prompt">質問</label>
-    <textarea id="prompt">資料：光合成は、植物が光のエネルギーを使い、二酸化炭素と水から糖と酸素を作る反応である。葉の中の葉緑体で行われる。
-質問：植物は光から何を作るの？資料だけを使って、日本語で答えてください。</textarea>
-    <div class="row">
-      <button id="ask" class="main" type="button" disabled>答えさせる</button>
+      <button id="run-all" class="main" type="button">全部を順に試す</button>
       <button id="stop" type="button" disabled>止める</button>
     </div>
-    <label>答え</label>
+    <div class="row">
+      <button data-test="load" type="button">1 読み込み</button>
+      <button data-test="short" type="button">2 短い答え</button>
+      <button data-test="rag" type="button">3 検索と連携</button>
+      <button data-test="long" type="button">4 長い資料</button>
+      <button data-test="ten" type="button">5 連続10問</button>
+      <button id="unload" type="button">外す</button>
+    </div>
+    <p id="status"></p>
+    <label>いまの答え</label>
     <div id="out"></div>
-    <div class="stats">
-      <div><b id="s-load">—</b><span>読み込み（秒）</span></div>
-      <div><b id="s-first">—</b><span>最初の文字まで（秒）</span></div>
-      <div><b id="s-speed">—</b><span>速さ（字/秒）</span></div>
+  </section>
+
+  <section>
+    <h2>結果</h2>
+    <div style="overflow-x:auto"><table id="results"><thead><tr><th>試験</th><th>結果</th><th>最初の文字</th><th>速さ</th><th>品質</th></tr></thead><tbody></tbody></table></div>
+    <p class="note">品質：期待する語が入った割合／資料との一致率／日本語の割合。速さは字/秒。</p>
+    <div class="row">
+      <button id="copy" type="button">結果をコピー</button>
+      <button id="clear-results" type="button">結果を消す</button>
     </div>
   </section>
 
   <section>
-    <h2>結果の記録</h2>
-    <ol id="history"></ol>
-    <div class="row">
-      <button id="copy" type="button">結果をコピー</button>
-      <button id="clear-history" type="button">記録を消す</button>
-    </div>
-    <p class="note">うまくいった・落ちた、の記録です。「結果をコピー」で、そのまま送れます。</p>
+    <h2>段階の記録（強制終了しても残る）</h2>
+    <pre id="diag">—</pre>
   </section>
 
   <section>
     <h2>保存したモデル</h2>
     <pre id="cache">—</pre>
-    <div class="row"><button id="clear-cache" type="button">試験室のモデルを全部消す</button></div>
+    <div class="row"><button id="clear-cache" type="button">試験室で使うモデルを全部消す</button></div>
+    <p class="note">アプリと試験室は、同じモデルの保存分を共有します（同じ入口で開いた場合）。</p>
   </section>
 
   <section>
@@ -118,283 +118,18 @@
     <pre id="log"></pre>
   </section>
 
-  <p class="note"><a href="../index.html">アプリに戻る</a> ・ 使っている仕組み：wllama 3.6.1（llama.cpp のWeb版、MITライセンス）</p>
+  <p class="note"><a href="../index.html">アプリに戻る</a> ・ 手順書：docs/VERIFY-IPHONE.md ・ 使っている仕組み：wllama 3.6.1（llama.cpp のWeb版、MIT）</p>
 </main>
 
-<script type="module">
-import { Wllama, LoggerWithoutDebug } from './vendor/wllama-3.6.1/index.js';
-
-const abs = (p) => new URL(p, location.href).href;
-const PATHS = { default: abs('./vendor/wllama-3.6.1/wasm/wllama.wasm') };
-const COMPAT = { worker: abs('./vendor/wllama-compat-3.6.1/wasm/wllama.js'), wasm: abs('./vendor/wllama-compat-3.6.1/wasm/wllama.wasm') };
-
-// モデルの候補。layers は層の数（分担のときに半分をGPUへ）
-const MODELS = [
-  { id: 'tiny', label: '配管テスト用（極小 0.5MB・意味のある答えは出ない）', url: abs('./models/tiny-test.gguf'), mb: 0.5, layers: 2, raw: true },
-  { id: 'lfm2', label: 'LFM2 350M・日本語対応（4bit・約230MB）', url: 'https://huggingface.co/LiquidAI/LFM2-350M-GGUF/resolve/main/LFM2-350M-Q4_K_M.gguf', mb: 229, layers: 16 },
-  { id: 'qwen', label: 'Qwen2.5 0.5B（4bit・約430MB）', url: 'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_0.gguf', mb: 429, layers: 24 },
-];
-const ENGINE_NOTE = {
-  cpu: 'GPUを一切使いません。GPUまわりの不具合（iOSのSafari）を避けられます。',
-  split: 'モデルの半分の層をGPU、残りをCPUで計算します。GPUに置く量が半分になります。',
-  gpu: '全部の層をGPUで計算します。いちばん速い代わりに、アプリで落ちた原因に近い動かし方です。',
-};
-
-const $ = (s) => document.querySelector(s);
-const el = {
-  env: $('#env'), model: $('#model'), engine: $('#engine'), engineNote: $('#engine-note'), load: $('#load'), unload: $('#unload'),
-  prompt: $('#prompt'), ask: $('#ask'), stop: $('#stop'), out: $('#out'), sLoad: $('#s-load'), sFirst: $('#s-first'), sSpeed: $('#s-speed'),
-  history: $('#history'), copy: $('#copy'), clearHistory: $('#clear-history'), cache: $('#cache'), clearCache: $('#clear-cache'), log: $('#log'), crash: $('#crash'),
-};
-
-for (const m of MODELS) {
-  const o = document.createElement('option');
-  o.value = m.id;
-  o.textContent = m.label;
-  el.model.appendChild(o);
-}
-const modelOf = () => MODELS.find((m) => m.id === el.model.value);
-const engineLabel = (e) => ({ cpu: 'CPUだけ', split: '分担', gpu: 'GPU' })[e];
-const showEngineNote = () => (el.engineNote.textContent = ENGINE_NOTE[el.engine.value]);
-el.engine.addEventListener('change', showEngineNote);
-showEngineNote();
-
-function log(text) {
-  const t = new Date().toLocaleTimeString('ja-JP');
-  el.log.textContent += `${t} ${text}\n`;
-  el.log.scrollTop = el.log.scrollHeight;
-}
-
-// ---- 落ちたときの記録 ----
-// 動かす直前に「いま何をしているか」を localStorage に書く（すぐ書けるので、落ちる直前でも残る）。
-// 終わったら消す。ふつうに閉じたら pagehide で消す。次に開いたとき残っていれば、その途中で落ちた。
-const STEP_KEY = 'lab-step';
-const HIST_KEY = 'lab-history';
-const store = {
-  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (_) { return d; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) { /* 使えなくても試験はできる */ } },
-  del(k) { try { localStorage.removeItem(k); } catch (_) { /* 同上 */ } },
-};
-const stepStart = (step) => store.set(STEP_KEY, { step, model: modelOf().id, engine: el.engine.value, at: Date.now() });
-const stepEnd = () => store.del(STEP_KEY);
-window.addEventListener('pagehide', stepEnd);
-
-function addHistory(entry) {
-  const list = store.get(HIST_KEY, []);
-  list.unshift({ ...entry, at: Date.now() });
-  store.set(HIST_KEY, list.slice(0, 20));
-  renderHistory();
-}
-function historyLine(h) {
-  const m = MODELS.find((x) => x.id === h.model);
-  const when = new Date(h.at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-  return `${when} ${m ? m.label.split('（')[0] : h.model}／${engineLabel(h.engine)}：${h.result}`;
-}
-function renderHistory() {
-  const list = store.get(HIST_KEY, []);
-  el.history.replaceChildren();
-  if (!list.length) {
-    const li = document.createElement('li');
-    li.textContent = 'まだありません';
-    el.history.appendChild(li);
-    return;
-  }
-  for (const h of list) {
-    const li = document.createElement('li');
-    li.className = h.ok ? 'ok' : 'ng';
-    li.textContent = historyLine(h);
-    el.history.appendChild(li);
-  }
-}
-
-const crashed = store.get(STEP_KEY, null);
-if (crashed) {
-  stepEnd();
-  const m = MODELS.find((x) => x.id === crashed.model);
-  el.crash.style.display = 'block';
-  el.crash.textContent = `前回、「${m ? m.label.split('（')[0] : crashed.model}／${engineLabel(crashed.engine)}」の「${crashed.step}」の途中でページが落ちたようです。記録に残しました。`;
-  addHistory({ model: crashed.model, engine: crashed.engine, ok: false, result: `落ちた（${crashed.step}）` });
-}
-renderHistory();
-
-// ---- この端末の情報 ----
-async function describeEnv() {
-  const lines = [];
-  lines.push(`ブラウザ：${navigator.userAgent.replace(/^Mozilla\/5\.0 /, '')}`);
-  lines.push(`CPUの数：${navigator.hardwareConcurrency || '不明'}`);
-  // アプリの種類は名前（UA）で見分ける。iPhone の Chrome は UA に CriOS が入る。
-  // JSPI（Wasm の新しい機能）は、新しい Safari にもあるので、エンジンの判定には使わない（機能の有無として出す）
-  const ua = navigator.userAgent;
-  const app = /CriOS/.test(ua) ? 'iPhone の Chrome' : /FxiOS/.test(ua) ? 'iPhone の Firefox' : /EdgiOS/.test(ua) ? 'iPhone の Edge' : /iPhone|iPad/.test(ua) ? 'Safari（またはホーム画面のアプリ）' : 'その他';
-  lines.push(`アプリ：${app}`);
-  lines.push(`JSPI（速い版を使う条件）：${self.WebAssembly && WebAssembly.Suspending ? 'あり' : 'なし（互換版で動く）'}`);
-  let gpu = '無し';
-  try {
-    if (navigator.gpu) {
-      const adapter = await navigator.gpu.requestAdapter();
-      if (adapter) {
-        const lim = adapter.limits;
-        gpu = `あり（1つのバッファの上限 ${Math.round(lim.maxBufferSize / 1048576)}MB・保存用バッファの上限 ${Math.round(lim.maxStorageBufferBindingSize / 1048576)}MB）`;
-      } else gpu = 'あり（ただし使えるGPUが見つからない）';
-    }
-  } catch (e) { gpu = `調べられない（${e.message}）`; }
-  lines.push(`GPU（WebGPU）：${gpu}`);
-  lines.push(`複数スレッド：${self.crossOriginIsolated ? '使える' : '使えない（GitHub Pagesでは1スレッドで動く）'}`);
-  try {
-    const est = await navigator.storage.estimate();
-    lines.push(`保存領域：使用 ${Math.round(est.usage / 1048576)}MB／上限の目安 ${Math.round(est.quota / 1048576)}MB`);
-  } catch (_) { /* 不明でよい */ }
-  el.env.textContent = lines.join('\n');
-}
-describeEnv();
-
-// ---- 読み込み・答え ----
-let wllama = null;
-let loaded = null; // { model, engine }
-let abort = null;
-
-function newWllama() {
-  const w = new Wllama(PATHS, { logger: LoggerWithoutDebug, allowOffline: true, parallelDownloads: 2 });
-  w.setCompat(COMPAT); // Safari 向けの互換版も、このサイトから読む（外部のCDNに頼らない）
-  return w;
-}
-
-async function renderCache() {
-  try {
-    const w = wllama || newWllama();
-    const list = await w.cacheManager.list();
-    el.cache.textContent = list.length
-      ? list.map((e) => `${decodeURIComponent(e.metadata && e.metadata.originalURL ? e.metadata.originalURL.split('/').pop() : e.name)}　${Math.round(e.size / 1048576)}MB`).join('\n')
-      : '保存したモデルはありません';
-  } catch (e) {
-    el.cache.textContent = `調べられません（${e.message}）`;
-  }
-}
-renderCache();
-
-function setBusy(busy) {
-  el.load.disabled = busy || !!loaded;
-  el.unload.disabled = busy || !loaded;
-  el.ask.disabled = busy || !loaded;
-  el.model.disabled = busy || !!loaded;
-  el.engine.disabled = busy || !!loaded;
-}
-
-el.load.addEventListener('click', async () => {
-  const m = modelOf();
-  const engine = el.engine.value;
-  const nGpu = engine === 'cpu' ? 0 : engine === 'split' ? Math.ceil(m.layers / 2) : 999;
-  setBusy(true);
-  el.out.textContent = '';
-  el.sLoad.textContent = el.sFirst.textContent = el.sSpeed.textContent = '—';
-  log(`読み込み開始：${m.label}／${engineLabel(engine)}（GPUの層 ${nGpu === 999 ? '全部' : nGpu}）`);
-  const t0 = performance.now();
-  try {
-    wllama = newWllama();
-    stepStart('ダウンロード／保存分の確認');
-    let lastPct = -1;
-    await wllama.loadModelFromUrl(m.url, {
-      n_gpu_layers: nGpu,
-      n_ctx: 1024,
-      n_threads: 1,
-      progressCallback: ({ loaded: l, total }) => {
-        const pct = total ? Math.floor((l / total) * 100) : 0;
-        if (pct !== lastPct && pct % 10 === 0) {
-          lastPct = pct;
-          log(`ダウンロード ${pct}%（${Math.round(l / 1048576)}／${Math.round(total / 1048576)}MB）`);
-          if (pct === 100) stepStart('モデルを計算の準備に展開');
-        }
-      },
-    });
-    const sec = ((performance.now() - t0) / 1000).toFixed(1);
-    el.sLoad.textContent = sec;
-    loaded = { model: m.id, engine };
-    stepEnd();
-    log(`読み込み完了（${sec}秒）`);
-    addHistory({ model: m.id, engine, ok: true, result: `読み込みOK（${sec}秒）` });
-  } catch (e) {
-    stepEnd();
-    log(`読み込み失敗：${e.message}`);
-    addHistory({ model: m.id, engine, ok: false, result: `読み込みエラー：${e.message.slice(0, 80)}` });
-    try { if (wllama) await wllama.exit(); } catch (_) { /* 片付けの失敗は無視 */ }
-    wllama = null;
-  }
-  setBusy(false);
-  renderCache();
-});
-
-el.ask.addEventListener('click', async () => {
-  if (!wllama || !loaded) return;
-  setBusy(true);
-  el.stop.disabled = false;
-  el.out.textContent = '';
-  abort = new AbortController();
-  const t0 = performance.now();
-  let first = 0;
-  let text = '';
-  stepStart('答えを作る');
-  log('答えを作っています…');
-  try {
-    // 配管テスト用の極小モデルは会話の形式を持たないので、文の続きを書かせるだけにする
-    const raw = MODELS.find((x) => x.id === loaded.model).raw;
-    const common = { max_tokens: raw ? 40 : 200, temperature: 0, stream: true, abortSignal: abort.signal };
-    const stream = raw
-      ? await wllama.createCompletion({ prompt: el.prompt.value, ...common })
-      : await wllama.createChatCompletion({ messages: [{ role: 'user', content: el.prompt.value }], ...common });
-    for await (const chunk of stream) {
-      const c = chunk.choices && chunk.choices[0];
-      const piece = (c && (raw ? c.text : c.delta && c.delta.content)) || '';
-      if (piece && !first) first = performance.now();
-      text += piece;
-      el.out.textContent = text;
-    }
-    const total = (performance.now() - t0) / 1000;
-    const firstSec = first ? ((first - t0) / 1000).toFixed(1) : '—';
-    const genSec = first ? (performance.now() - first) / 1000 : total;
-    const speed = genSec > 0 ? (text.length / genSec).toFixed(1) : '—';
-    el.sFirst.textContent = firstSec;
-    el.sSpeed.textContent = speed;
-    stepEnd();
-    log(`完了：${text.length}字・${total.toFixed(1)}秒`);
-    addHistory({ model: loaded.model, engine: loaded.engine, ok: true, result: `答えOK（最初の文字まで${firstSec}秒・${speed}字/秒）` });
-  } catch (e) {
-    stepEnd();
-    const stopped = e && (e.name === 'AbortError' || e.name === 'WllamaAbortError');
-    log(stopped ? '止めました' : `答えの失敗：${e.message}`);
-    if (!stopped) addHistory({ model: loaded.model, engine: loaded.engine, ok: false, result: `答えエラー：${e.message.slice(0, 80)}` });
-  }
-  abort = null;
-  el.stop.disabled = true;
-  setBusy(false);
-});
-
-el.stop.addEventListener('click', () => abort && abort.abort());
-
-el.unload.addEventListener('click', async () => {
-  setBusy(true);
-  try { if (wllama) await wllama.exit(); } catch (e) { log(`外すときのエラー：${e.message}`); }
-  wllama = null;
-  loaded = null;
-  log('外しました（保存したモデルは残っています）');
-  setBusy(false);
-});
-
-el.copy.addEventListener('click', async () => {
-  const text = [el.env.textContent, '', ...store.get(HIST_KEY, []).map(historyLine)].join('\n');
-  try {
-    await navigator.clipboard.writeText(text);
-    log('結果をコピーしました');
-  } catch (_) {
-    el.log.textContent += `\n${text}\n`;
-    log('コピーできなかったので、ここに表示しました');
-  }
-});
-el.clearHistory.addEventListener('click', () => { store.del(HIST_KEY); renderHistory(); });
-el.clearCache.addEventListener('click', async () => {
-  if (loaded) { log('先に「外す」を押してください'); return; }
-  try { await newWllama().cacheManager.clear(); log('試験室のモデルを消しました'); } catch (e) { log(`消せませんでした：${e.message}`); }
-  renderCache();
-});
-</script>
+<script src="../js/normalize.js"></script>
+<script src="../js/net.js"></script>
+<script src="../js/store.js"></script>
+<script src="../js/embed.js"></script>
+<script src="../js/diag.js"></script>
+<script src="../js/models.js"></script>
+<script src="../js/rag.js"></script>
+<script src="../js/llm.js"></script>
+<script src="data.js"></script>
+<script src="lab.js"></script>
 </body>
 </html>

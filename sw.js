@@ -1,15 +1,17 @@
 // Service Worker：アプリ本体をキャッシュして、電波が無くても開けるようにする。
 // VERSION は index.html のスクリプトの ?v= と同じにする（tests で食い違いを検出）。
 // 外部（Wikipedia など）の通信はここでは扱わない。同じオリジンのファイルだけを対象にする。
-const VERSION = '0.11.4';
+const VERSION = '0.12.0';
 const CACHE = `ai-${VERSION}`;
+// 同梱の実行用ファイルは、フォルダ名に版が入っているので、アプリの版とは別に長く保存する
+const VENDOR_CACHE = 'ai-vendor-1';
 const FILES = [
   './index.html',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png',
-  ...['normalize', 'db', 'terms', 'chat', 'wiki', 'passages', 'feedback', 'net', 'queue', 'backup', 'store', 'embed', 'llm', 'rag', 'growth', 'sentiment', 'vectors', 'hybrid', 'app'].map(
+  ...['normalize', 'db', 'terms', 'chat', 'wiki', 'passages', 'feedback', 'net', 'queue', 'backup', 'store', 'embed', 'llm', 'diag', 'models', 'rag', 'growth', 'sentiment', 'vectors', 'hybrid', 'app'].map(
     (n) => `./js/${n}.js?v=${VERSION}`
   ),
 ];
@@ -34,6 +36,23 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET' || url.origin !== self.location.origin) return;
   // 試験室（lab/）はアプリとは別のページ。ここでは扱わない（アプリの画面のキャッシュを上書きしないため）
   if (url.pathname.includes('/lab/')) return;
+
+  // 同梱した実行用ファイル（vendor/、wllama など。版番号つきのフォルダ）：一度取ったら版をまたいで使い回す（オフラインでも動くように）
+  if (url.pathname.includes('/vendor/')) {
+    event.respondWith(
+      caches.open(VENDOR_CACHE).then((cache) =>
+        cache.match(request).then(
+          (hit) =>
+            hit ||
+            fetch(request).then((response) => {
+              if (response.ok) cache.put(request, response.clone());
+              return response;
+            })
+        )
+      )
+    );
+    return;
+  }
 
   // 画面（index.html）：繋がるなら最新を取り、無理ならキャッシュ。更新が届くようにする
   if (request.mode === 'navigate') {

@@ -227,6 +227,7 @@
     #scrim { display: none !important; }
     #menu, #close { display: none; }
   }
+    .small-note { font-size: 12px; opacity: .7; margin: 4px 0; }
     #where-note, #llm-note { font-size: 12px; opacity: .7; margin: 4px 0; }
   </style>
 </head>
@@ -292,6 +293,7 @@
           <button id="semantic-btn" type="button">意味検索を有効にする</button>
           <button id="semantic-sync" type="button" hidden>未作成を作る</button>
         </div>
+        <div class="row"><button id="diag-btn" type="button">診断の記録を見る</button></div>
         <div class="row"><button id="reset-all" type="button">初期状態に戻す（モデルも全て消す）</button></div>
         <p id="llm" style="margin-top:10px"></p>
         <p style="font-size:12px;opacity:.75;margin:4px 0"><a href="lab/index.html">試験室</a>：回答モデルを、落ちずに動かせる方式（CPU／分担／GPU）を試すページ</p>
@@ -299,6 +301,11 @@
           <label for="llm-pack">モデル</label>
           <select id="llm-pack"></select>
           <p id="llm-note"></p>
+          <div id="llm-engine-row">
+            <label for="llm-engine">動かし方</label>
+            <select id="llm-engine"></select>
+            <p class="small-note">CPUだけ：遅いが落ちにくい見込み。分担：半分の層をGPU。GPU：速いが、iPhoneで落ちた方式に近い。</p>
+          </div>
         </div>
         <div class="row">
           <button id="llm-btn" type="button">回答モデルを有効にする</button>
@@ -370,24 +377,26 @@
   </div>
 </div>
 
-<script src="js/normalize.js?v=0.11.4"></script>
-<script src="js/db.js?v=0.11.4"></script>
-<script src="js/terms.js?v=0.11.4"></script>
-<script src="js/chat.js?v=0.11.4"></script>
-<script src="js/wiki.js?v=0.11.4"></script>
-<script src="js/passages.js?v=0.11.4"></script>
-<script src="js/feedback.js?v=0.11.4"></script>
-<script src="js/net.js?v=0.11.4"></script>
-<script src="js/queue.js?v=0.11.4"></script>
-<script src="js/backup.js?v=0.11.4"></script>
-<script src="js/store.js?v=0.11.4"></script>
-<script src="js/embed.js?v=0.11.4"></script>
-<script src="js/llm.js?v=0.11.4"></script>
-<script src="js/rag.js?v=0.11.4"></script>
-<script src="js/growth.js?v=0.11.4"></script>
-<script src="js/sentiment.js?v=0.11.4"></script>
-<script src="js/vectors.js?v=0.11.4"></script>
-<script src="js/hybrid.js?v=0.11.4"></script>
-<script src="js/app.js?v=0.11.4"></script>
+<script src="js/normalize.js?v=0.12.0"></script>
+<script src="js/db.js?v=0.12.0"></script>
+<script src="js/terms.js?v=0.12.0"></script>
+<script src="js/chat.js?v=0.12.0"></script>
+<script src="js/wiki.js?v=0.12.0"></script>
+<script src="js/passages.js?v=0.12.0"></script>
+<script src="js/feedback.js?v=0.12.0"></script>
+<script src="js/net.js?v=0.12.0"></script>
+<script src="js/queue.js?v=0.12.0"></script>
+<script src="js/backup.js?v=0.12.0"></script>
+<script src="js/store.js?v=0.12.0"></script>
+<script src="js/embed.js?v=0.12.0"></script>
+<script src="js/llm.js?v=0.12.0"></script>
+<script src="js/rag.js?v=0.12.0"></script>
+<script src="js/growth.js?v=0.12.0"></script>
+<script src="js/sentiment.js?v=0.12.0"></script>
+<script src="js/vectors.js?v=0.12.0"></script>
+<script src="js/hybrid.js?v=0.12.0"></script>
+<script src="js/diag.js?v=0.12.0"></script>
+<script src="js/models.js?v=0.12.0"></script>
+<script src="js/app.js?v=0.12.0"></script>
 </body>
 </html>

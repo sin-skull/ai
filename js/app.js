@@ -60,6 +60,9 @@
     llmPack: $('#llm-pack'),
     llmNote: $('#llm-note'),
     llmChoice: $('#llm-choice'),
+    llmEngine: $('#llm-engine'),
+    llmEngineRow: $('#llm-engine-row'),
+    diagBtn: $('#diag-btn'),
     load: $('#llm-load'),
     wipeBtn: $('#wipe'),
     resetBtn: $('#reset-all'),
@@ -263,8 +266,10 @@
     .then(async (opened) => {
       db = opened;
       await AI.net.load(db); // 前回のモードを引き継ぐ
+      bootCrash = await diag.boot(); // 前回、モデルの処理の途中で強制終了していたら、その段階
       await loadSemantic(); // 意味検索の設定を引き継ぐ
       await loadAnswer(); // 回答モデルの設定を引き継ぐ
+      await handleBootCrash(); // 落ちた処理を、自動でくり返さない
       const autoRow = await getSetting(AUTO_KEY);
       autoSearch = !!(autoRow && autoRow.value);
       renderAuto();
@@ -492,8 +497,29 @@
   const SEMANTIC_MIN = 0.84;
   let semantic = { enabled: false, pack: AI.embed.PACKS[0].id };
   let provider = null;
-  let preparing = null; // 読み込み中のPromise（二重に読み込まない）
   let semanticWarned = false;
+
+  // ---- 段階の記録（診断）と、モデルを1つずつ載せる管理 ----
+  // 記録は端末の中（localStorage と記憶の設定）にだけ置く。質問や資料の本文は記録しない。
+  const diag = AI.diag.create({
+    name: 'ai',
+    persist: {
+      load: async () => (db ? ((await getSetting('diag-cur')) || {}).value || null : null),
+      save: async (v) => (db ? putSetting('diag-cur', v) : undefined),
+    },
+  });
+  window.addEventListener('pagehide', () => diag.markClean()); // ふつうに閉じたときは、落ちた扱いにしない
+  let bootCrash = null;
+  // 検索モデル（embed）と回答モデル（llm）は同時に載せない。モデルを使う処理は1列に並べる
+  const models = AI.models.create();
+  models.register('embed', () => provider);
+  models.register('llm', () => generator);
+  window.__aiModels = models; // 診断用（テストと開発者ツールから、いま何が載っているかを見る）
+  const prepareEmbed = (m, onProgress) => diag.step('embed-load', { model: semantic.pack }, () => m.prepare(onProgress));
+  const prepareLlm = (m, onProgress) =>
+    m.pack && m.pack.kind === 'gguf'
+      ? m.prepare(onProgress) // 段階（ダウンロード・初期化・最初の計算）は中で記録する
+      : diag.step('init', { model: m.pack ? m.pack.id : '', engine: 'tjs' }, () => m.prepare(onProgress));
 
   const packOf = (id) => AI.embed.PACKS.find((p) => p.id === id) || AI.embed.PACKS[0];
   const getSetting = (name) => AI.db.tx(db, 'settings', 'readonly', (t) => AI.db.rq(t.objectStore('settings').get(name)));
@@ -537,11 +563,10 @@
     };
   }
 
+  // 検索モデルを載せる（回答モデルが載っていれば、先に外す）
   async function ensureReady(onProgress) {
     if (!provider) return false;
-    if (provider.ready) return true;
-    if (!preparing) preparing = provider.prepare(onProgress).finally(() => (preparing = null));
-    await preparing;
+    await models.run('embed', null, { onProgress, prepare: prepareEmbed });
     return provider.ready;
   }
 
@@ -553,35 +578,44 @@
 
   async function searchRaw(query, limit) {
     if (!(semantic.enabled && provider)) return AI.passages.search(db, query, { limit });
+    // 回答モデルが載っているときは、まずキーワードで探す。見つかれば、検索モデルとの入れ替え（数秒かかる）をしない
+    if (models.resident() === 'llm') {
+      const quick = await AI.passages.search(db, query, { limit });
+      if (quick.length) return quick;
+    }
     let note = null;
     try {
       if (!provider.ready) note = progressMessage('意味検索の準備をしています…');
-      await ensureReady();
+      return await models.run(
+        'embed',
+        (p) => diag.step('embed', { model: semantic.pack }, () => AI.hybrid.search(db, query, { provider: p, limit, minSemantic: SEMANTIC_MIN })),
+        { prepare: prepareEmbed }
+      );
     } catch (error) {
       if (!semanticWarned) {
         semanticWarned = true;
         addMessage('ai', `${error.message}\nキーワード検索だけで探します。`);
       }
+      return AI.passages.search(db, query, { limit });
+    } finally {
+      if (note) note.remove();
     }
-    if (note) note.remove();
-    const found = await AI.hybrid.search(db, query, { provider: provider.ready ? provider : null, limit, minSemantic: SEMANTIC_MIN });
-    return found;
   }
 
-  // 文章を1件保存したあと、その分のベクトルを作る（失敗しても保存は有効。あとで「未作成を作る」で補える）
-  let embedding = 0; // ベクトルを作っている最中の数（その間は、意味検索のモデルを外さない）
+  // 文章を1件保存したあと、その分のベクトルを作る（失敗しても保存は有効。あとで「未作成を作る」で補える）。
+  // 回答モデルが載っているとき・ほかの処理中は、入れ替えを起こさないよう、今は作らない（起動時と「未作成を作る」でまとめて作る）
   async function indexInBackground(passage) {
     if (!(semantic.enabled && provider)) return;
-    embedding++;
-    try {
-      await ensureReady();
-      await AI.vectors.indexPassage(db, passage, provider);
-      await renderSemantic();
-    } catch (_) {
+    if (models.resident() === 'llm' || models.busy()) {
       await renderSemantic().catch(() => {});
-    } finally {
-      embedding--;
+      return;
     }
+    try {
+      await models.run('embed', (p) => diag.step('embed', { model: semantic.pack }, () => AI.vectors.indexPassage(db, passage, p)), { prepare: prepareEmbed });
+    } catch (_) {
+      /* あとで作れる */
+    }
+    await renderSemantic().catch(() => {});
   }
 
   async function renderSemantic() {
@@ -601,6 +635,11 @@
 
   // 端末にすでにあるものを確かめる（あれば、ダウンロードしない）
   async function savedState(pack) {
+    if (pack.kind === 'gguf') {
+      // wllama のモデル（GGUF）。実行用ファイルはアプリと一緒に届くので、モデルの有無だけを見る
+      const g = await AI.llm.ggufSaved(pack).catch(() => ({ saved: false, bytes: 0 }));
+      return { lib: { cached: true }, model: { cached: g.saved, files: g.saved ? 1 : 0, bytes: g.bytes }, complete: g.saved };
+    }
     const [lib, model] = await Promise.all([AI.store.inspectLibrary(), AI.store.inspectModel(pack.model)]);
     return { lib, model, complete: lib.cached && model.cached };
   }
@@ -649,24 +688,30 @@
   async function doEnable(pack) {
     const pm = progressMessage('準備しています…');
     const candidate = AI.embed.transformersProvider(pack);
+    let n = 0;
     try {
-      await candidate.prepare(downloadProgress(pm));
-      pm.set('動作を確かめています…');
-      await candidate.embed(['動作確認'], 'query'); // 実際に1回動かして、使えることを確かめる
+      // 何も載っていない状態で読み込む（回答モデルが載っていれば外す）
+      await models.exclusive(async () => {
+        await diag.step('embed-load', { model: pack.id }, () => candidate.prepare(downloadProgress(pm)));
+        pm.set('動作を確かめています…');
+        await diag.step('embed', { model: pack.id }, () => candidate.embed(['動作確認'], 'query')); // 実際に1回動かす
+        provider = candidate;
+        semantic = { enabled: true, pack: pack.id };
+        semanticWarned = false;
+        await putSetting(SEMANTIC_KEY, semantic);
+        n = await diag.step('reindex', { model: pack.id }, () =>
+          AI.vectors.reindex(db, candidate, { onProgress: ({ done, total }) => pm.set(`文章のベクトルを作っています… ${done}/${total}`) })
+        );
+        return { adopt: { kind: 'embed', model: candidate } };
+      });
     } catch (error) {
       pm.remove();
+      if (candidate.unload) await candidate.unload().catch(() => {});
       addMessage('ai', `意味検索を有効にできませんでした。\n${error.message}`);
       await renderFoot(false);
       return;
     }
     AI.store.persist(); // ブラウザに「消さないで」と頼む（取り直しを避ける）
-    provider = candidate;
-    semantic = { enabled: true, pack: pack.id };
-    semanticWarned = false;
-    await putSetting(SEMANTIC_KEY, semantic);
-    const n = await AI.vectors.reindex(db, provider, {
-      onProgress: ({ done, total }) => pm.set(`文章のベクトルを作っています… ${done}/${total}`),
-    });
     pm.remove();
     addMessage('ai', `意味検索が使えるようになりました。保存済みの文章 ${n} 件を処理しました。`, {
       sub: '言い換えた質問でも、近い内容の文章を探します。',
@@ -687,7 +732,10 @@
         /* 消せなくても無効にはなっている */
       }
     }
+    const p = provider;
     provider = null;
+    models.forget('embed');
+    if (p && p.unload) await models.exclusive(() => p.unload());
     await renderFoot(false);
     return wipe;
   }
@@ -713,10 +761,11 @@
     if (!(semantic.enabled && provider)) return;
     const pm = progressMessage('ベクトルを作っています…');
     try {
-      await ensureReady(downloadProgress(pm));
-      const n = await AI.vectors.reindex(db, provider, {
-        onProgress: ({ done, total }) => pm.set(`ベクトルを作っています… ${done}/${total}`),
-      });
+      const n = await models.run(
+        'embed',
+        (p) => diag.step('reindex', { model: semantic.pack }, () => AI.vectors.reindex(db, p, { onProgress: ({ done, total }) => pm.set(`ベクトルを作っています… ${done}/${total}`) })),
+        { onProgress: downloadProgress(pm), prepare: prepareEmbed }
+      );
       pm.remove();
       addMessage('ai', `${n} 件のベクトルを作りました。`);
     } catch (error) {
@@ -728,21 +777,10 @@
 
   // ---- 起動時の自動準備 ----
   // 有効にしてあるものを、起動したら自動で読み込む（オフラインでも、端末にあるものだけで）。
-  // メモリの山を作らないよう、1つずつ：意味検索 → 足りないベクトルを作る → 意味検索を外す → 回答モデル。
-  // 起動時の読み込みで落ちると、次の起動でまた読み込んで、また落ちる（繰り返す）。
-  // それを防ぐため、読み込む前に目印を残し、前回の目印が残っていたら、今回は自動で読み込まない。
-  const WARM_KEY = 'warmup-try';
+  // 1つずつ：（未作成のベクトルがあれば）検索モデル → ベクトル作成 → 外す → 回答モデル。
+  // 前回モデルの処理の途中で強制終了していたら、自動では読み込まない（落ち続けを防ぐ。handleBootCrash を参照）。
   async function startWarmUp() {
-    const row = await getSetting(WARM_KEY);
-    if (row && row.value && !closedNormallyAfter(row.value.at)) {
-      await putSetting(WARM_KEY, null);
-      if (answerCrashed) return; // 回答モデルの案内をもう出している
-      addMessage('ai', `前回、起動時の自動読み込み（${row.value.stage}）の途中でアプリが落ちたようです。今回は自動で読み込みません。`, {
-        sub: '保存した文章の検索と、文章の抜き出しは使えます。読み込みは、下のボタンからいつでもできます。',
-        actions: [{ label: '今すぐ読み込む', main: true, run: () => warmUp() }],
-      });
-      return;
-    }
+    if (bootCrash) return;
     await new Promise((r) => setTimeout(r, 1500)); // 画面の表示と更新の確認を先に済ませる
     await warmUp();
   }
@@ -751,32 +789,32 @@
     const wantSemantic = semantic.enabled && provider;
     const wantAnswer = answerCfg.enabled && generator;
     if (!wantSemantic && !wantAnswer) return;
-    const mark = (stage) => putSetting(WARM_KEY, { at: Date.now(), stage });
     const pm = progressMessage('起動の準備をしています…');
     const problems = [];
     if (wantSemantic) {
       try {
-        await mark('意味検索の読み込み');
-        pm.set('意味検索を読み込んでいます…');
-        await ensureReady(downloadProgress(pm));
-        await mark('意味づけ（ベクトル）の更新');
-        await AI.vectors.reindex(db, provider, { onProgress: ({ done, total }) => pm.set(`意味づけ（ベクトル）を更新しています… ${done}/${total}`) });
+        const st = await AI.vectors.status(db, provider);
+        if (st.stale > 0) {
+          pm.set('意味づけ（ベクトル）を更新しています…');
+          await models.run(
+            'embed',
+            (p) => diag.step('reindex', { model: semantic.pack, total: st.stale, boot: true }, () => AI.vectors.reindex(db, p, { onProgress: ({ done, total }) => pm.set(`意味づけ（ベクトル）を更新しています… ${done}/${total}`) })),
+            { onProgress: downloadProgress(pm), prepare: prepareEmbed }
+          );
+        }
         await renderSemantic();
-        if (wantAnswer && provider.unload && !embedding) await provider.unload(); // 回答モデルを読む前に外す（次の検索で読み直す）
       } catch (error) {
         problems.push(`意味検索：${error.message}`);
       }
     }
     if (wantAnswer) {
       try {
-        await mark('回答モデルの読み込み');
         pm.set('回答モデルを読み込んでいます…');
         await ensureGenerator(downloadProgress(pm));
       } catch (error) {
         problems.push(`回答モデル：${error.message}`);
       }
     }
-    await putSetting(WARM_KEY, null);
     pm.remove();
     if (problems.length) addMessage('ai', `起動時の準備で、使えないものがありました。\n${problems.join('\n')}`, { sub: '保存した文章の検索と、文章の抜き出しは使えます。' });
   }
@@ -786,93 +824,110 @@
 
   // ---- 回答モデル（保存した文章を読んで、文章で答える）----
   const ANSWER_KEY = 'answer';
-  let answerCfg = { enabled: false, pack: AI.llm.available()[0].id, persona: { preset: 'polite', custom: '' } };
+  let answerCfg = { enabled: false, pack: AI.llm.available()[0].id, engine: 'cpu', persona: { preset: 'polite', custom: '' }, crashes: {} };
   let generator = null;
-  let generatorPreparing = null;
   let answerWarned = false;
-  let answerCrashed = false; // 前回、回答モデルで落ちていた（起動時の案内を重ねない）
+  let turn = 0; // この起動で答えた回数（記録用。連続した質問のどこで落ちたかが分かる）
   let lastChat = null; // 直前の質問と答え。「それってなんで？」のような続きの質問に使う
   let busy = false; // 回答の生成中は次の生成を始めない（端末が重くなる）
 
   const llmPackOf = (id) => AI.llm.PACKS.find((p) => p.id === id) || AI.llm.available()[0];
 
+  const engineOf = (pack) => (pack.kind === 'gguf' ? (AI.llm.ENGINES[answerCfg.engine] ? answerCfg.engine : 'cpu') : 'tjs');
+  const makeGenerator = (pack) => AI.llm.createGenerator(pack, { engine: engineOf(pack), diag, offline: () => AI.net.isOffline() });
+
   async function loadAnswer() {
     const row = await getSetting(ANSWER_KEY);
     if (row && row.value) {
-      answerCfg = { ...answerCfg, ...row.value, persona: { ...answerCfg.persona, ...(row.value.persona || {}) } };
+      answerCfg = { ...answerCfg, ...row.value, persona: { ...answerCfg.persona, ...(row.value.persona || {}) }, crashes: row.value.crashes || {} };
     }
-    // 前回、読み込みの途中でアプリが落ちていたら（目印が残っている）、回答モデルを自動でオフにする
-    const tried = await getSetting(TRY_KEY);
-    if (tried && tried.value && closedNormallyAfter(tried.value.at)) {
-      await putSetting(TRY_KEY, null); // 答えを作っている途中で、ふつうに閉じただけ
-    } else if (tried && tried.value) {
-      answerCrashed = true;
-      const wasPack = llmPackOf(tried.value.pack);
-      await putSetting(TRY_KEY, null);
-      const raise = String(tried.value.stage || '').startsWith('回答の作成') && (answerCfg.load || 0) < AI.rag.LOAD_LEVELS.length - 1;
-      answerCfg = { ...answerCfg, enabled: false, load: (answerCfg.load || 0) + (raise ? 1 : 0) };
-      await saveAnswerCfg();
-      addMessage('ai', `前回、回答モデル（${wasPack.label}）の${tried.value.stage || '読み込み'}中にアプリが落ちたようです。回答モデルはオフにしました。`, {
-        sub: `原因はまだ分かっていません（メモリ不足とは限りません）。${raise ? '次は、読ませる資料と答えの長さを減らして（負荷を1段下げて）試します。' : ''}保存した文章の検索と、文章の抜き出しはそのまま使えます。下のボタンから、すぐ選び直せます。`,
-        actions: AI.llm.available().map((p) => ({
-          label: `${p.label}で有効にする`,
-          main: p.id !== wasPack.id,
-          run: async () => {
-            answerCfg = { ...answerCfg, pack: p.id };
-            await saveAnswerCfg();
-            renderAnswer();
-            enableAnswer();
-          },
-        })),
-      });
-    }
-    if (answerCfg.enabled) generator = AI.llm.transformersGenerator(llmPackOf(answerCfg.pack));
+    if (answerCfg.enabled) generator = makeGenerator(llmPackOf(answerCfg.pack));
   }
 
-  // 読み込み中の目印。最後まで終われば消す。落ちたら残るので、次の起動で気づける
-  const TRY_KEY = 'answer-try';
-  // ふつうに閉じた・再読み込みしたときは、目印を消す（落ちたときは、この処理は走らない）
-  // 記憶（IndexedDB）への書き込みは閉じる瞬間には間に合わないので、すぐ書ける localStorage に時刻を残す
-  const CLEAN_KEY = 'ai-closed-normally';
-  window.addEventListener('pagehide', () => {
-    try {
-      localStorage.setItem(CLEAN_KEY, String(Date.now()));
-    } catch (_) {
-      /* 使えない環境では、落ちた扱いになるだけ */
-    }
-  });
-  // 前回ふつうに閉じた時刻（起動時に1回だけ読む）。落ちたときは、閉じる処理が走らないので古いまま
-  let cleanAt = null;
-  function closedNormallyAfter(at) {
-    if (cleanAt === null) {
-      try {
-        cleanAt = Number(localStorage.getItem(CLEAN_KEY) || 0);
-        localStorage.removeItem(CLEAN_KEY);
-      } catch (_) {
-        cleanAt = 0;
+  // ---- 強制終了のあと ----
+  // 前回、モデルの処理の途中で終わっていたら：
+  // - 起動時の自動読み込みはしない（同じ処理を自動でくり返さない）。
+  // - 回答モデルで落ちたなら、その条件（モデル・方式）の回数を数え、答えの作成中なら資料の量を1段下げる。
+  //   同じ条件で2回落ちたら、方式を1段軽くする（GPU → 分担 → CPU）。いちばん軽い条件でも3回落ちたら、回答モデルをオフにする（検索と抜き出しは使える）。
+  // - 保存した知識・バックアップには一切触れない。
+  const LLM_STAGES = ['download', 'init', 'first', 'read', 'generate'];
+  async function handleBootCrash() {
+    if (!bootCrash) return;
+    const where = diag.describe(bootCrash);
+    const isLlm = LLM_STAGES.includes(bootCrash.stage);
+    const isEmbed = ['embed-load', 'embed', 'reindex'].includes(bootCrash.stage);
+    const lines = [];
+    if (isLlm && answerCfg.enabled) {
+      const pack = llmPackOf(answerCfg.pack);
+      const key = `${pack.id}@${engineOf(pack)}`;
+      const count = (answerCfg.crashes[key] || 0) + 1;
+      answerCfg.crashes = { ...answerCfg.crashes, [key]: count };
+      if (['read', 'generate'].includes(bootCrash.stage) && (answerCfg.load || 0) < AI.rag.LOAD_LEVELS.length - 1) {
+        answerCfg.load = (answerCfg.load || 0) + 1;
+        lines.push('読ませる資料の量を1段減らしました。');
       }
+      const order = AI.llm.ENGINE_ORDER;
+      const idx = order.indexOf(engineOf(pack));
+      const lightest = pack.kind !== 'gguf' || idx === order.length - 1;
+      if (count >= 2 && !lightest) {
+        answerCfg.engine = order[idx + 1];
+        lines.push(`同じ条件で${count}回落ちたので、動かし方を「${AI.llm.ENGINES[answerCfg.engine].label}」に変えました。`);
+      } else if (count >= 3 && lightest) {
+        answerCfg.enabled = false;
+        lines.push('いちばん軽い条件でも3回落ちたので、回答モデルをオフにしました。試験室で、別のモデルや方式を試してください。');
+      }
+      await saveAnswerCfg();
+      generator = answerCfg.enabled ? makeGenerator(llmPackOf(answerCfg.pack)) : null;
     }
-    return cleanAt > at;
+    if (isEmbed && semantic.enabled) lines.push('意味検索は、必要になったときに読み込みます。');
+    addMessage('ai', `前回、「${where}」の途中でアプリが強制終了したようです。今回は、モデルを自動では読み込みません。`, {
+      sub: `${lines.join('\n')}${lines.length ? '\n' : ''}保存した単語・文章・バックアップはそのままです。保存した文章の検索と、文章の抜き出しは使えます。`,
+      actions: [
+        { label: '今すぐ読み込む', main: true, run: () => warmUp() },
+        { label: '診断の記録を見る', run: async () => showDiagnostics() },
+      ],
+    });
   }
-  async function guarded(pack, work) {
-    const mark = (stage) => putSetting(TRY_KEY, { pack: pack.id, at: Date.now(), stage });
-    await mark('読み込み');
-    try {
-      return await work(mark);
-    } finally {
-      await putSetting(TRY_KEY, null);
-    }
+
+  // 段階の記録を見せる（質問の本文は入っていない）
+  function showDiagnostics() {
+    const events = diag.events().slice(-25);
+    const mark = { begin: '▶', ok: '✓', error: '×', crash: '💥', closed: '・' };
+    const text = events.length
+      ? events.map((e) => `${new Date(e.t).toLocaleTimeString('ja-JP')} ${mark[e.kind] || ''} ${diag.describe(e)}${e.ms != null ? ` ${(e.ms / 1000).toFixed(1)}秒` : ''}${e.message ? `：${e.message}` : ''}`).join('\n')
+      : '記録はまだありません。';
+    addMessage('ai', text, {
+      title: '診断の記録',
+      sub: '▶ 始まり ✓ 終わり × エラー 💥 その段階の途中で強制終了。記録は端末の中だけにあり、質問の本文は入っていません。',
+      actions: [
+        {
+          label: 'コピー',
+          run: async () => {
+            try {
+              await navigator.clipboard.writeText(`${navigator.userAgent}\n${text}`);
+              addMessage('ai', 'コピーしました。');
+            } catch (_) {
+              addMessage('ai', 'コピーできませんでした。画面を長押しして選んでください。');
+            }
+          },
+        },
+        {
+          label: '記録を消す',
+          run: async () => {
+            diag.clear();
+            addMessage('ai', '診断の記録を消しました。');
+          },
+        },
+      ],
+    });
   }
 
   const saveAnswerCfg = () => putSetting(ANSWER_KEY, answerCfg);
 
+  // 回答モデルを載せる（検索モデルが載っていれば、先に外す）
   async function ensureGenerator(onProgress) {
     if (!generator) return false;
-    if (generator.ready) return true;
-    if (!generatorPreparing) {
-      generatorPreparing = guarded(llmPackOf(answerCfg.pack), () => generator.prepare(onProgress)).finally(() => (generatorPreparing = null));
-    }
-    await generatorPreparing;
+    await models.run('llm', null, { onProgress, prepare: prepareLlm });
     return generator.ready;
   }
 
@@ -889,13 +944,24 @@
     }
     el.llmPack.value = pack.id;
     el.llmNote.textContent = pack.note || '';
+    if (!el.llmEngine.options.length) {
+      for (const [id, e] of Object.entries(AI.llm.ENGINES)) {
+        if (id !== 'cpu' && !navigator.gpu) continue; // GPU が無い端末では CPU だけ
+        const o = document.createElement('option');
+        o.value = id;
+        o.textContent = e.label;
+        el.llmEngine.appendChild(o);
+      }
+    }
+    el.llmEngineRow.hidden = pack.kind !== 'gguf';
+    el.llmEngine.value = engineOf(pack);
     if (!answerCfg.enabled) {
       el.llm.textContent = `回答モデル：オフ\n保存した文章を読んで、文章で答えます（約${pack.approxMB}MB・Wi-Fi推奨）`;
       el.llmBtn.textContent = '有効にする';
       el.tone.hidden = true;
       return;
     }
-    el.llm.textContent = `回答モデル：オン（${pack.label}）`;
+    el.llm.textContent = `回答モデル：オン（${pack.label}${pack.kind === 'gguf' ? `／${AI.llm.ENGINES[engineOf(pack)].label}` : '／旧方式'}）`;
     el.llmBtn.textContent = 'オフにする';
     el.tone.hidden = false;
     el.load.value = String(answerCfg.load || 0);
@@ -913,36 +979,40 @@
     });
 
   function runEnableAnswer(pack) {
-    return AI.store.once(`enable:${pack.model}`, () => doEnableAnswer(pack));
+    return AI.store.once(`enable:${pack.id}`, () => doEnableAnswer(pack));
   }
 
   async function doEnableAnswer(pack) {
     const pm = progressMessage('準備しています…');
-    const candidate = AI.llm.transformersGenerator(pack);
+    const candidate = makeGenerator(pack);
     try {
-      await guarded(pack, async (mark) => {
-        await candidate.prepare(downloadProgress(pm));
-        await mark('動作確認');
+      // 何も載っていない状態で読み込む（検索モデルが載っていれば外す）。読み込み → 最初の計算 → 短い答え、の順に確かめる
+      await models.exclusive(async () => {
+        await prepareLlm(candidate, downloadProgress(pm));
         pm.set('動作を確かめています…');
-        await candidate.generate([{ role: 'user', content: 'こんにちは' }], { maxTokens: 4 }); // 実際に1回動かす
+        await (pack.kind === 'gguf'
+          ? candidate.generate([{ role: 'user', content: 'こんにちは' }], { maxTokens: 4 })
+          : diag.step('first', { model: pack.id, engine: 'tjs' }, () => candidate.generate([{ role: 'user', content: 'こんにちは' }], { maxTokens: 4 })));
+        generator = candidate;
+        return { adopt: { kind: 'llm', model: candidate } };
       });
     } catch (error) {
       pm.remove();
-      await candidate.unload();
+      if (candidate.unload) await candidate.unload().catch(() => {});
       addMessage('ai', `回答モデルを有効にできませんでした。\n${error.message}`, {
-        sub: 'メモリが足りない端末では動かないことがあります。保存した文章の検索は、そのまま使えます。',
+        sub: '保存した文章の検索は、そのまま使えます。動かし方（CPUだけ・分担・GPU）を変えるか、試験室で別のモデルを試してください。',
+        actions: [{ label: '診断の記録を見る', run: async () => showDiagnostics() }],
       });
       await renderFoot(false);
       return;
     }
     AI.store.persist();
-    generator = candidate;
     answerCfg = { ...answerCfg, enabled: true, pack: pack.id };
     answerWarned = false;
     await saveAnswerCfg();
     pm.remove();
     addMessage('ai', '回答モデルが使えるようになりました。', {
-      sub: '保存した文章に関係する質問をすると、その文章を読んで答えます。メニューで口調も変えられます。',
+      sub: `${pack.label}／${pack.kind === 'gguf' ? AI.llm.ENGINES[engineOf(pack)].label : '旧方式'}。保存した文章に関係する質問をすると、その文章を読んで答えます。`,
     });
     await renderFoot(false);
   }
@@ -952,12 +1022,14 @@
     const pack = llmPackOf(answerCfg.pack);
     const g = generator;
     generator = null;
-    if (g) await g.unload();
+    models.forget('llm');
+    if (g) await models.exclusive(() => g.unload());
     answerCfg = { ...answerCfg, enabled: false };
     await saveAnswerCfg();
     if (wipe) {
       try {
-        await AI.store.removeModel(pack.model);
+        if (pack.kind === 'gguf') await AI.llm.ggufRemove(pack);
+        else await AI.store.removeModel(pack.model);
       } catch (_) {
         /* 消せなくても無効にはなっている */
       }
@@ -984,6 +1056,16 @@
   el.load.addEventListener('change', async () => {
     answerCfg = { ...answerCfg, load: Number(el.load.value) };
     await saveAnswerCfg();
+  });
+
+  el.llmEngine.addEventListener('change', async () => {
+    answerCfg = { ...answerCfg, engine: el.llmEngine.value };
+    await saveAnswerCfg();
+    renderAnswer();
+  });
+  el.diagBtn.addEventListener('click', () => {
+    setDrawer(false);
+    showDiagnostics();
   });
 
   el.llmPack.addEventListener('change', async () => {
@@ -1016,55 +1098,66 @@
     if (busy) return false;
     busy = true;
     try {
+      const pack = llmPackOf(answerCfg.pack);
       let note = null;
+      if (!generator.ready) note = progressMessage('回答モデルを読み込んでいます…');
+      const msg = addMessage('ai', '考えています…', { actions: [{ label: '止める', run: async () => generator && generator.stop() }] });
+      msg.hidden = !!note;
+      const text = msg.querySelector('.body').childNodes[0];
+      turn++;
+      const stageInfo = { load: answerCfg.load || 0, turn };
+      let result;
       try {
-        if (!generator.ready) note = progressMessage('回答モデルを読み込んでいます…');
-        await ensureGenerator(note ? downloadProgress(note) : undefined);
+        // 回答モデルを載せて（検索モデルが載っていれば外して）から、答えを作る。モデルの処理は1列に並ぶので、ほかと重ならない
+        result = await models.run(
+          'llm',
+          async (g) => {
+            if (note) {
+              note.remove();
+              note = null;
+              msg.hidden = false;
+            }
+            const run = () =>
+              AI.rag.answer({
+                onProgress: async (p) => {
+                  text.nodeValue = p.phase === 'read' ? `資料を分けて読んでいます…（${p.i}/${p.n}）` : `読んだ内容から答えを書いています…`;
+                  scrollDown();
+                },
+                stageInfo,
+                query,
+                hits,
+                generator: g,
+                history,
+                load: answerCfg.load,
+                persona: answerCfg.persona,
+                onToken: (t) => {
+                  text.nodeValue = t;
+                  scrollDown();
+                },
+              });
+            // 旧方式（Transformers.js）は中で段階を分けられないので、まとめて「回答の生成」として記録する
+            return pack.kind === 'gguf' ? run() : diag.step('generate', { model: pack.id, engine: 'tjs', ...stageInfo }, run);
+          },
+          { onProgress: note ? downloadProgress(note) : undefined, prepare: prepareLlm }
+        );
       } catch (error) {
         if (note) note.remove();
-        if (!answerWarned) {
+        msg.remove();
+        if (!answerWarned || (generator && generator.ready)) {
           answerWarned = true;
-          addMessage('ai', `${error.message}\n文章の抜粋を並べて答えます。`);
+          addMessage('ai', `回答を作れませんでした。\n${error.message}\n文章の抜粋を並べて答えます。`, {
+            actions: [{ label: '診断の記録を見る', run: async () => showDiagnostics() }],
+          });
         }
         return false;
       }
-      if (note) note.remove();
-
-      const msg = addMessage('ai', '考えています…', { actions: [{ label: '止める', run: async () => generator.stop() }] });
-      const text = msg.querySelector('.body').childNodes[0];
-      let result;
-      try {
-        // 答えを作っている最中に落ちても、次の起動で気づけるように目印を付ける
-        // 答えを作る間は、意味検索のモデルをメモリから外す（2つ同時に載せない）。次の検索で読み直す
-        if (provider && provider.ready && provider.unload && !preparing && !embedding) await provider.unload();
-        result = await guarded(llmPackOf(answerCfg.pack), async (mark) => {
-          await mark('回答の作成');
-          return AI.rag.answer({
-            // どの段階・どの量で落ちたかを、次の起動で分かるように、動かす直前に記録する
-            onProgress: async (p) => {
-              const step = p.phase === 'read' ? `塊${p.i}/${p.n}を読む` : p.phase === 'write' ? '仕上げ' : '1回で答える';
-              await mark(`回答の作成（${step}・${p.chars}字・答えの量${answerCfg.load || 0}）`);
-              text.nodeValue = p.phase === 'read' ? `資料を分けて読んでいます…（${p.i}/${p.n}）` : `読んだ内容から答えを書いています…`;
-              scrollDown();
-            },
-            query,
-            hits,
-            generator,
-            history,
-            load: answerCfg.load,
-            persona: answerCfg.persona,
-            onToken: (t) => {
-              text.nodeValue = t;
-              scrollDown();
-            },
-          });
-        });
-      } catch (error) {
-        msg.remove();
-        addMessage('ai', `回答を作れませんでした。\n${error.message}\n文章の抜粋を並べて答えます。`);
-        return false;
-      }
       msg.remove();
+      // 答えが最後まで出たら、この条件での強制終了の回数を数え直す（安定している）
+      const key = `${pack.id}@${engineOf(pack)}`;
+      if (answerCfg.crashes && answerCfg.crashes[key]) {
+        answerCfg.crashes = { ...answerCfg.crashes, [key]: 0 };
+        saveAnswerCfg().catch(() => {});
+      }
 
       const evidenceActions = result.evidence.map((e) => ({ label: `全文を見る [${e.n}] ${e.passage.title}`, run: async () => showPassage(e.passage, false) }));
       if (result.unknown) {
@@ -1163,8 +1256,23 @@
         },
       });
     }
+    for (const pack of AI.llm.GGUF_PACKS) {
+      const g = await AI.llm.ggufSaved(pack).catch(() => ({ saved: false }));
+      if (!g.saved) continue;
+      const using = answerCfg.enabled && answerCfg.pack === pack.id;
+      rows.push({
+        title: `回答モデル（${pack.label}）`,
+        note: using ? '使用中。消すと回答モデルはオフになります' : '',
+        bytes: g.bytes,
+        remove: async () => {
+          if (using) await turnOffAnswer(false);
+          await AI.llm.ggufRemove(pack);
+          addMessage('ai', '回答モデルを端末から消しました。');
+        },
+      });
+    }
     const seenModels = new Set(); // 同じモデルで形式違いの版は、ファイルを共有するので1行にまとめる
-    for (const pack of AI.llm.PACKS) {
+    for (const pack of AI.llm.ONNX_PACKS) {
       if (seenModels.has(pack.model)) continue;
       seenModels.add(pack.model);
       const m = await AI.store.inspectModel(pack.model);
@@ -1780,7 +1888,8 @@
             try {
               if (generator) await generator.unload();
               await AI.backup.wipe(db, { settings: true });
-              for (const pack of AI.llm.PACKS) await AI.store.removeModel(pack.model).catch(() => {});
+              for (const pack of AI.llm.ONNX_PACKS) await AI.store.removeModel(pack.model).catch(() => {});
+              for (const pack of AI.llm.GGUF_PACKS) await AI.llm.ggufRemove(pack).catch(() => {});
               for (const pack of AI.embed.PACKS) await AI.store.removeModel(pack.model).catch(() => {});
               await AI.store.removeLibrary().catch(() => {});
             } catch (error) {

@@ -217,12 +217,12 @@
   const charsOf = (messages) => messages.reduce((sum, m) => sum + String(m.content || '').length, 0);
   const pause = (ms) => new Promise((r) => setTimeout(r, ms)); // 塊のあいだで少し休ませる（後片付けの時間）
 
-  async function answerInPieces({ query, chunks, generator, persona, onToken, onProgress, maxTokens, history, lim }) {
+  async function answerInPieces({ query, chunks, generator, persona, onToken, onProgress, maxTokens, history, lim, stageInfo }) {
     const notes = [];
     for (let i = 0; i < chunks.length; i++) {
       const noteMessages = buildNoteMessages(query, chunks[i], history);
       if (onProgress) await onProgress({ phase: 'read', i: i + 1, n: chunks.length, chars: charsOf(noteMessages) });
-      const raw = await generator.generate(noteMessages, { maxTokens: lim.noteTokens });
+      const raw = await generator.generate(noteMessages, { maxTokens: lim.noteTokens, stageInfo: { ...(stageInfo || {}), piece: i + 1, pieces: chunks.length } });
       const note = tidy(raw, 2, 200);
       if (!isNone(note)) notes.push({ chunk: chunks[i], note });
       await pause(30);
@@ -241,7 +241,7 @@
     const context = [...byPassage.values()].map((v, i) => ({ n: i + 1, passage: v.passage, text: v.parts.join('\n') }));
     const finalMessages = buildMessages(query, context, persona, history);
     if (onProgress) await onProgress({ phase: 'write', i: chunks.length, n: chunks.length, chars: charsOf(finalMessages) });
-    const raw = (await generator.generate(finalMessages, { maxTokens: maxTokens || lim.tokens, onToken })).trim();
+    const raw = (await generator.generate(finalMessages, { maxTokens: maxTokens || lim.tokens, onToken, stageInfo: { ...(stageInfo || {}), pieces: chunks.length } })).trim();
     const text = tidy(raw);
     const unknown = isUnknown(text);
     return {
@@ -261,7 +261,7 @@
     return [...seen.values()].map((passage, i) => ({ passage, n: i + 1 }));
   }
 
-  async function answer({ query, hits, generator, persona, onToken, onProgress, maxTokens, history, load }) {
+  async function answer({ query, hits, generator, persona, onToken, onProgress, maxTokens, history, load, stageInfo }) {
     const lim = limitsOf(load);
     const context = pickContext(hits, query, lim);
     if (!context.length) return { text: '', unknown: true, evidence: [], grounding: 0 };
@@ -274,11 +274,11 @@
     // 読ませる量が塊1つ分より多ければ、分けて読む
     const size = chunks.reduce((sum, c) => sum + c.text.length, 0);
     if (chunks.length > 1 && size > lim.chunk) {
-      return answerInPieces({ query, chunks, generator, persona, onToken, onProgress, maxTokens, history, lim });
+      return answerInPieces({ query, chunks, generator, persona, onToken, onProgress, maxTokens, history, lim, stageInfo });
     }
     const messages = buildMessages(query, context, persona, history);
     if (onProgress) await onProgress({ phase: 'single', i: 1, n: 1, chars: charsOf(messages) });
-    const raw = (await generator.generate(messages, { maxTokens: maxTokens || lim.tokens, onToken })).trim();
+    const raw = (await generator.generate(messages, { maxTokens: maxTokens || lim.tokens, onToken, stageInfo })).trim();
     const text = tidy(raw);
     const unknown = isUnknown(text);
     const ground = unknown ? 0 : grounding(text, context.map((c) => c.text).join('\n'));
