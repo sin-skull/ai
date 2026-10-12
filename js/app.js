@@ -272,7 +272,7 @@
       renderWeights();
       await render();
       await renderFoot(true);
-      warmUp(); // 意味検索と回答モデルを、起動時に自動で読み込む（待たない）
+      startWarmUp(); // 意味検索と回答モデルを、起動時に自動で読み込む（待たない）
     })
     .catch((error) => {
       addMessage('ai', `記憶を開けませんでした。\n${error.message}\nプライベートブラウズでは使えないことがあります。`);
@@ -729,16 +729,37 @@
   // ---- 起動時の自動準備 ----
   // 有効にしてあるものを、起動したら自動で読み込む（オフラインでも、端末にあるものだけで）。
   // メモリの山を作らないよう、1つずつ：意味検索 → 足りないベクトルを作る → 意味検索を外す → 回答モデル。
+  // 起動時の読み込みで落ちると、次の起動でまた読み込んで、また落ちる（繰り返す）。
+  // それを防ぐため、読み込む前に目印を残し、前回の目印が残っていたら、今回は自動で読み込まない。
+  const WARM_KEY = 'warmup-try';
+  async function startWarmUp() {
+    const row = await getSetting(WARM_KEY);
+    if (row && row.value && !closedNormallyAfter(row.value.at)) {
+      await putSetting(WARM_KEY, null);
+      if (answerCrashed) return; // 回答モデルの案内をもう出している
+      addMessage('ai', `前回、起動時の自動読み込み（${row.value.stage}）の途中でアプリが落ちたようです。今回は自動で読み込みません。`, {
+        sub: '保存した文章の検索と、文章の抜き出しは使えます。読み込みは、下のボタンからいつでもできます。',
+        actions: [{ label: '今すぐ読み込む', main: true, run: () => warmUp() }],
+      });
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 1500)); // 画面の表示と更新の確認を先に済ませる
+    await warmUp();
+  }
+
   async function warmUp() {
     const wantSemantic = semantic.enabled && provider;
     const wantAnswer = answerCfg.enabled && generator;
     if (!wantSemantic && !wantAnswer) return;
+    const mark = (stage) => putSetting(WARM_KEY, { at: Date.now(), stage });
     const pm = progressMessage('起動の準備をしています…');
     const problems = [];
     if (wantSemantic) {
       try {
+        await mark('意味検索の読み込み');
         pm.set('意味検索を読み込んでいます…');
         await ensureReady(downloadProgress(pm));
+        await mark('意味づけ（ベクトル）の更新');
         await AI.vectors.reindex(db, provider, { onProgress: ({ done, total }) => pm.set(`意味づけ（ベクトル）を更新しています… ${done}/${total}`) });
         await renderSemantic();
         if (wantAnswer && provider.unload && !embedding) await provider.unload(); // 回答モデルを読む前に外す（次の検索で読み直す）
@@ -748,12 +769,14 @@
     }
     if (wantAnswer) {
       try {
+        await mark('回答モデルの読み込み');
         pm.set('回答モデルを読み込んでいます…');
         await ensureGenerator(downloadProgress(pm));
       } catch (error) {
         problems.push(`回答モデル：${error.message}`);
       }
     }
+    await putSetting(WARM_KEY, null);
     pm.remove();
     if (problems.length) addMessage('ai', `起動時の準備で、使えないものがありました。\n${problems.join('\n')}`, { sub: '保存した文章の検索と、文章の抜き出しは使えます。' });
   }
@@ -767,6 +790,7 @@
   let generator = null;
   let generatorPreparing = null;
   let answerWarned = false;
+  let answerCrashed = false; // 前回、回答モデルで落ちていた（起動時の案内を重ねない）
   let lastChat = null; // 直前の質問と答え。「それってなんで？」のような続きの質問に使う
   let busy = false; // 回答の生成中は次の生成を始めない（端末が重くなる）
 
@@ -782,6 +806,7 @@
     if (tried && tried.value && closedNormallyAfter(tried.value.at)) {
       await putSetting(TRY_KEY, null); // 答えを作っている途中で、ふつうに閉じただけ
     } else if (tried && tried.value) {
+      answerCrashed = true;
       const wasPack = llmPackOf(tried.value.pack);
       await putSetting(TRY_KEY, null);
       const raise = String(tried.value.stage || '').startsWith('回答の作成') && (answerCfg.load || 0) < AI.rag.LOAD_LEVELS.length - 1;
@@ -816,14 +841,18 @@
       /* 使えない環境では、落ちた扱いになるだけ */
     }
   });
+  // 前回ふつうに閉じた時刻（起動時に1回だけ読む）。落ちたときは、閉じる処理が走らないので古いまま
+  let cleanAt = null;
   function closedNormallyAfter(at) {
-    try {
-      const v = Number(localStorage.getItem(CLEAN_KEY) || 0);
-      localStorage.removeItem(CLEAN_KEY);
-      return v > at;
-    } catch (_) {
-      return false;
+    if (cleanAt === null) {
+      try {
+        cleanAt = Number(localStorage.getItem(CLEAN_KEY) || 0);
+        localStorage.removeItem(CLEAN_KEY);
+      } catch (_) {
+        cleanAt = 0;
+      }
     }
+    return cleanAt > at;
   }
   async function guarded(pack, work) {
     const mark = (stage) => putSetting(TRY_KEY, { pack: pack.id, at: Date.now(), stage });
