@@ -60,6 +60,7 @@
     llmPack: $('#llm-pack'),
     llmNote: $('#llm-note'),
     llmChoice: $('#llm-choice'),
+    load: $('#llm-load'),
     wipeBtn: $('#wipe'),
     resetBtn: $('#reset-all'),
     tone: $('#tone'),
@@ -810,6 +811,7 @@
     el.llm.textContent = `回答モデル：オン（${pack.label}）`;
     el.llmBtn.textContent = 'オフにする';
     el.tone.hidden = false;
+    el.load.value = String(answerCfg.load || 0);
     el.persona.value = answerCfg.persona.preset;
     el.personaCustom.hidden = answerCfg.persona.preset !== 'custom';
     el.personaCustom.value = answerCfg.persona.custom || '';
@@ -891,6 +893,11 @@
       ],
     });
   }
+
+  el.load.addEventListener('change', async () => {
+    answerCfg = { ...answerCfg, load: Number(el.load.value) };
+    await saveAnswerCfg();
+  });
 
   el.llmPack.addEventListener('change', async () => {
     answerCfg = { ...answerCfg, pack: el.llmPack.value };
@@ -979,7 +986,10 @@
         const topicQ = history && history[0] ? history[0].q : query;
         addMessage('ai', picked ? picked.text : '資料から答えを取り出せませんでした。', {
           sub: `モデルの答えに、保存した文章に無い内容が多かったので、文章から抜き出しました。\n根拠：[1] ${result.evidence[0].passage.title}\nもし良ければ、Wikipediaで調べましょうか？`,
-          actions: evidenceActions.concat([{ label: 'Wikipediaで調べる', run: async () => searchWikipedia(topicQ) }]),
+          actions: evidenceActions.concat([
+            { label: 'モデルの答えも見る', run: async () => addMessage('ai', result.raw || result.text, { sub: '⚠ 保存した文章に無い内容が多く含まれる、モデルの答えそのままです。間違いが混ざっています。' }) },
+            { label: 'Wikipediaで調べる', run: async () => searchWikipedia(topicQ) },
+          ]),
         });
         return true;
       }
